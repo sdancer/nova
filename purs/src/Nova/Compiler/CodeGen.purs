@@ -33,11 +33,12 @@ addLocalsFromPattern (PatCons hd tl) ctx = addLocalsFromPattern tl (addLocalsFro
 addLocalsFromPattern (PatAs name pat) ctx = addLocalsFromPattern pat (ctx { locals = Set.insert name ctx.locals })
 addLocalsFromPattern (PatParens p) ctx = addLocalsFromPattern p ctx
 
--- | Collect function names from declarations
+-- | Collect function names from declarations (includes data constructors)
 collectModuleFuncs :: Array Declaration -> Set String
 collectModuleFuncs decls = foldr go Set.empty decls
   where
     go (DeclFunction func) acc = Set.insert func.name acc
+    go (DeclDataType dt) acc = foldr (\con s -> Set.insert con.name s) acc dt.constructors
     go _ acc = acc
 
 -- | Generate Elixir code from a module

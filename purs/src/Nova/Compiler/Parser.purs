@@ -37,6 +37,12 @@ dropNewlines = skipNewlines
 stripNewlines :: Array Token -> Array Token
 stripNewlines = Array.filter (\t -> t.tokenType /= TokNewline)
 
+-- | Check if a string starts with a lowercase letter
+isLowerCase :: String -> Boolean
+isLowerCase s = case CU.charAt 0 s of
+  Just c -> c >= 'a' && c <= 'z'
+  Nothing -> false
+
 -- ------------------------------------------------------------
 -- Token matching helpers
 -- ------------------------------------------------------------
@@ -104,6 +110,8 @@ parseLiteral tokens =
         else success (Ast.LitInt (readInt t.value)) (Array.drop 1 ts)
       TokString -> success (Ast.LitString t.value) (Array.drop 1 ts)
       TokChar -> success (Ast.LitChar (firstChar t.value)) (Array.drop 1 ts)
+      TokIdentifier | t.value == "true" -> success (Ast.LitBool true) (Array.drop 1 ts)
+      TokIdentifier | t.value == "false" -> success (Ast.LitBool false) (Array.drop 1 ts)
       _ -> failure "Expected literal"
     _ -> failure "Expected literal"
   where
@@ -294,9 +302,11 @@ parseBasicType tokens =
       -- Check for qualified type name (e.g., Ast.Expr)
       Tuple name rest <- parseQualifiedTypeName ts
       Tuple args rest' <- parseMany parseTypeAtom rest
+      -- Lowercase names are type variables, uppercase are type constructors
+      let base = if isLowerCase name then Ast.TyExprVar name else Ast.TyExprCon name
       case Array.length args of
-        0 -> success (Ast.TyExprCon name) rest'
-        _ -> success (foldTypeApp (Ast.TyExprCon name) args) rest'
+        0 -> success base rest'
+        _ -> success (foldTypeApp base args) rest'
     ts | Just t <- Array.head ts, t.tokenType == TokDelimiter, t.value == "(" -> do
       Tuple ty rest <- parseType (Array.drop 1 ts)
       Tuple _ rest' <- expectDelimiter rest ")"
@@ -334,7 +344,8 @@ parseTypeAtom tokens =
     Just t | t.tokenType == TokIdentifier -> do
       -- Handle qualified type names like Ast.Expr
       Tuple name rest <- parseQualifiedTypeName tokens
-      success (Ast.TyExprCon name) rest
+      -- Lowercase names are type variables, uppercase are type constructors
+      success (if isLowerCase name then Ast.TyExprVar name else Ast.TyExprCon name) rest
     Just t | t.tokenType == TokDelimiter, t.value == "(" -> do
       Tuple ty rest <- parseType (Array.drop 1 tokens)
       Tuple _ rest' <- expectDelimiter rest ")"

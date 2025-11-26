@@ -3,13 +3,13 @@ module Nova.Compiler.TypeChecker where
 import Prelude
 import Data.Either (Either(..))
 import Data.Maybe (Maybe(..))
-import Data.Tuple (Tuple(..))
+import Data.Tuple (Tuple(..), snd)
 import Data.Array ((:))
 import Data.Array as Array
 import Data.Map as Map
 import Data.Set as Set
 import Nova.Compiler.Types (Type(..), TVar, Scheme, Env, Subst, emptySubst, composeSubst, applySubst, freeTypeVars, freeTypeVarsEnv, freshVar, extendEnv, lookupEnv, mkScheme, mkTVar, mkTCon, tInt, tString, tChar, tBool, tArrow, tArray)
-import Nova.Compiler.Ast (Expr(..), Literal(..), Pattern(..), LetBind, CaseClause, Declaration(..), FunctionDeclaration, DoStatement(..))
+import Nova.Compiler.Ast (Expr(..), Literal(..), Pattern(..), LetBind, CaseClause, Declaration(..), FunctionDeclaration, DoStatement(..), DataType, DataConstructor, DataField, TypeExpr(..), TypeAlias)
 import Nova.Compiler.Unify (UnifyError, unify)
 
 -- | Type checking error
@@ -547,7 +547,82 @@ checkDecl env (DeclFunction func) =
 
 checkDecl env (DeclTypeSig _) = Right env
 
+checkDecl env (DeclDataType dt) = Right (checkDataType env dt)
+
+checkDecl env (DeclTypeAlias ta) = Right (checkTypeAlias env ta)
+
 checkDecl env _ = Right env
+
+-- | Process a data type declaration
+-- | Adds the type constructor and all data constructors to the environment
+checkDataType :: Env -> DataType -> Env
+checkDataType env dt =
+  let -- Create type variables for the type parameters
+      typeVarPairs = Array.mapWithIndex (\i v -> Tuple v (mkTVar (env.counter + i) v)) dt.typeVars
+      typeVarMap = Map.fromFoldable typeVarPairs
+      newCounter = env.counter + Array.length dt.typeVars
+      env1 = env { counter = newCounter }
+
+      -- The result type is the data type applied to its type variables
+      typeArgs = map (\(Tuple _ tv) -> TyVar tv) typeVarPairs
+      resultType = TyCon (mkTCon dt.name typeArgs)
+
+      -- Add each constructor to the environment
+      addConstructor e con =
+        let conType = buildConstructorType typeVarMap con.fields resultType
+            conScheme = mkScheme (map snd typeVarPairs) conType
+        in extendEnv e con.name conScheme
+  in Array.foldl addConstructor env1 dt.constructors
+
+-- | Build the type for a data constructor
+-- | e.g., Just :: forall a. a -> Maybe a
+-- | e.g., Cons :: forall a. a -> List a -> List a
+buildConstructorType :: Map.Map String TVar -> Array DataField -> Type -> Type
+buildConstructorType varMap fields resultType = go fields
+  where
+    go [] = resultType
+    go fs = case Array.uncons fs of
+      Nothing -> resultType
+      Just { head: field, tail: rest } ->
+        let fieldTy = typeExprToType varMap field.ty
+        in tArrow fieldTy (go rest)
+
+-- | Convert a TypeExpr to a Type using the variable mapping
+typeExprToType :: Map.Map String TVar -> TypeExpr -> Type
+typeExprToType varMap (TyExprVar name) =
+  case Map.lookup name varMap of
+    Just tv -> TyVar tv
+    Nothing -> TyCon (mkTCon name [])  -- Assume it's a type constructor
+typeExprToType varMap (TyExprCon name) =
+  TyCon (mkTCon name [])
+typeExprToType varMap (TyExprApp f arg) =
+  case typeExprToType varMap f of
+    TyCon tc -> TyCon { name: tc.name, args: Array.snoc tc.args (typeExprToType varMap arg) }
+    other -> other  -- Shouldn't happen for well-formed types
+typeExprToType varMap (TyExprArrow a b) =
+  tArrow (typeExprToType varMap a) (typeExprToType varMap b)
+typeExprToType varMap (TyExprRecord fields maybeRow) =
+  let fieldMap = Map.fromFoldable (map (\(Tuple l t) -> Tuple l (typeExprToType varMap t)) fields)
+      row = case maybeRow of
+        Just r -> case Map.lookup r varMap of
+          Just tv -> Just tv
+          Nothing -> Nothing
+        Nothing -> Nothing
+  in TyRecord { fields: fieldMap, row }
+typeExprToType varMap (TyExprForAll _ t) = typeExprToType varMap t  -- Ignore forall for now
+typeExprToType varMap (TyExprConstrained _ t) = typeExprToType varMap t  -- Ignore constraints
+typeExprToType varMap (TyExprParens t) = typeExprToType varMap t
+typeExprToType varMap (TyExprTuple ts) =
+  let tupName = "Tuple" <> show (Array.length ts)
+  in TyCon (mkTCon tupName (map (typeExprToType varMap) ts))
+
+-- | Process a type alias declaration
+checkTypeAlias :: Env -> TypeAlias -> Env
+checkTypeAlias env ta =
+  -- For now, just add the alias name as a type constructor
+  -- A full implementation would expand aliases during type checking
+  let scheme = mkScheme [] (TyCon (mkTCon ta.name []))
+  in extendEnv env ta.name scheme
 
 -- | Type check a module
 checkModule :: Env -> Array Declaration -> Either TCError Env
