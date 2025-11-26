@@ -149,19 +149,112 @@ import Data.Either (Either(..))
 import Data.Foldable (foldM)
 
 test :: Either String Int
-test = foldM (\sub k -> Right sub) 0 [1, 2, 3]
+test = foldM (\\sub k -> Right sub) 0 [1, 2, 3]
 """
 
-  -- Test 5b: foldM with Map.keys
-  log "  Test 5b (foldM with Map.keys):"
+  -- Test 5b: foldM with where
+  log "  Test 5b (foldM with where):"
+  testCode """
+module Test where
+import Data.Either (Either(..))
+import Data.Foldable (foldM)
+
+test :: Either String Int
+test = foldM helper 0 [1, 2, 3]
+  where
+    helper sub k = Right sub
+"""
+
+  -- Test 5c: where clause with closure
+  log "  Test 5c (where with closure):"
+  testCode """
+module Test where
+import Data.Either (Either(..))
+import Data.Foldable (foldM)
+
+test :: Int -> Either String Int
+test x = foldM helper 0 [1, 2, 3]
+  where
+    helper sub k = Right (sub + x)
+"""
+
+  -- Test 5d: Like unifyRecords signature (without case)
+  log "  Test 5d (like unifyRecords without case):"
   testCode """
 module Test where
 import Data.Either (Either(..))
 import Data.Map as Map
 import Data.Foldable (foldM)
 
-test :: Either String Int
-test = foldM (\sub k -> Right sub) 0 (Map.keys Map.empty)
+unifyRecords :: { fields :: Map.Map String Int, row :: _ }
+             -> { fields :: Map.Map String Int, row :: _ }
+             -> Either String Int
+unifyRecords r1 r2 = foldM helper 0 (Map.keys r1.fields)
+  where
+    helper sub k =
+      let v1 = Map.lookup k r1.fields
+      in Right sub
+"""
+
+  -- Test 5e: With case expression
+  log "  Test 5e (with case):"
+  testCode """
+module Test where
+import Data.Either (Either(..))
+import Data.Maybe (Maybe(..))
+
+test :: Int -> Either String Int
+test x = case Just x of
+  Just n -> Right n
+  Nothing -> Right 0
+"""
+
+  -- Test 5f: With Tuple pattern
+  log "  Test 5f (with Tuple pattern):"
+  testCode """
+module Test where
+import Data.Either (Either(..))
+import Data.Maybe (Maybe(..))
+import Data.Tuple (Tuple(..))
+
+test :: Int -> Int -> Either String Int
+test x y = case Tuple (Just x) (Just y) of
+  Tuple (Just a) (Just b) -> Right (a + b)
+  _ -> Right 0
+"""
+
+  -- Test 5g: Simpler case in where with record access
+  log "  Test 5g (case with record access in where):"
+  testCode """
+module Test where
+import Data.Either (Either(..))
+import Data.Map as Map
+import Data.Foldable (foldM)
+import Data.Maybe (Maybe(..))
+
+unifyRecords :: { fields :: Map.Map String Int, row :: _ }
+             -> Either String Int
+unifyRecords r1 = foldM helper 0 (Map.keys r1.fields)
+  where
+    helper sub k = case Map.lookup k r1.fields of
+      Just t1 -> Right t1
+      Nothing -> Right sub
+"""
+
+  -- Test 5h: Same but without foldM
+  log "  Test 5h (case with closure, no foldM):"
+  testCode """
+module Test where
+import Data.Either (Either(..))
+import Data.Map as Map
+import Data.Maybe (Maybe(..))
+
+testFn :: { fields :: Map.Map String Int, row :: _ } -> Either String Int
+testFn r1 = helper 0 "x"
+  where
+    helper sub k = case Map.lookup k r1.fields of
+      Just t1 -> Right t1
+      Nothing -> Right sub
 """
 
 testCode :: String -> Effect Unit
