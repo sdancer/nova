@@ -509,10 +509,15 @@ inferBinds env binds =
             case inferPat valRes.env bind.pattern valRes.ty of
               Left err -> Left err
               Right patRes ->
-                let scheme = generalize patRes.env (applySubst (composeSubst patRes.sub valRes.sub) valRes.ty)
+                -- IMPORTANT: Use the original env `e` for generalization, not valRes.env or patRes.env
+                -- This ensures lambda parameters don't leak into the outer scope and prevent
+                -- proper generalization. The lambda's internal bindings (parameters) should
+                -- not affect what gets generalized in the let binding.
+                let scheme = generalize e (applySubst (composeSubst patRes.sub valRes.sub) valRes.ty)
+                    -- But we do want to use the updated env's counter to avoid variable collisions
                     env3 = case bind.pattern of
-                      PatVar name -> extendEnv patRes.env name scheme
-                      _ -> patRes.env
+                      PatVar name -> extendEnv (e { counter = patRes.env.counter }) name scheme
+                      _ -> e { counter = patRes.env.counter }
                 in inferBindsPass2 env3 rest (composeSubst patRes.sub (composeSubst valRes.sub sub))
 
 -- | Infer case clauses
