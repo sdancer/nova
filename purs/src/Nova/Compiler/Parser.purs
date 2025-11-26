@@ -8,6 +8,8 @@ import Data.Tuple (Tuple(..))
 import Data.Foldable (foldl)
 import Data.String as String
 import Data.String.CodeUnits as CU
+import Data.Int as Int
+import Data.Number as Number
 import Nova.Compiler.Tokenizer (Token, TokenType(..))
 import Nova.Compiler.Ast as Ast
 
@@ -95,14 +97,25 @@ parseLiteral :: Array Token -> ParseResult Ast.Literal
 parseLiteral tokens =
   case skipNewlines tokens of
     ts | Just t <- Array.head ts -> case t.tokenType of
-      TokNumber -> success (Ast.LitNumber (readNumber t.value)) (Array.drop 1 ts)
+      TokNumber ->
+        -- Check if it's an integer or float
+        if String.contains (String.Pattern ".") t.value
+        then success (Ast.LitNumber (readNumber t.value)) (Array.drop 1 ts)
+        else success (Ast.LitInt (readInt t.value)) (Array.drop 1 ts)
       TokString -> success (Ast.LitString t.value) (Array.drop 1 ts)
       TokChar -> success (Ast.LitChar (firstChar t.value)) (Array.drop 1 ts)
       _ -> failure "Expected literal"
     _ -> failure "Expected literal"
   where
+    readInt :: String -> Int
+    readInt s = case Int.fromString s of
+      Just n -> n
+      Nothing -> 0
+
     readNumber :: String -> Number
-    readNumber s = 0.0  -- placeholder, will use proper parsing
+    readNumber s = case Number.fromString s of
+      Just n -> n
+      Nothing -> 0.0
 
     firstChar :: String -> Char
     firstChar s = case CU.charAt 0 s of
@@ -343,11 +356,11 @@ parsePattern tokens =
     , parseWildcardPattern
     , parseConsPattern
     , parseConstructorPattern
+    , parseParenPattern  -- Must come before parseTuplePattern to handle (h : t)
     , parseTuplePattern
     , parseListPattern
     , parseLiteralPattern
     , parseVarPattern
-    , parseParenPattern
     ]
     tokens
 
@@ -435,7 +448,7 @@ parseRecordPattern tokens =
 parseRecordFieldPattern :: Array Token -> ParseResult (Tuple String Ast.Pattern)
 parseRecordFieldPattern tokens = do
   Tuple label rest <- parseLabel tokens
-  case expectDelimiter rest ":" of
+  case expectColon rest of
     Right (Tuple _ rest') -> do
       Tuple pat rest'' <- parsePattern rest'
       success (Tuple label pat) rest''
@@ -461,9 +474,9 @@ parseSimplePattern tokens =
     , parseRecordPattern  -- Added to handle { field, ... } patterns in constructor arguments
     , parseQualifiedConstructorPatternSimple  -- Must be before parseVarPattern to handle Ast.PatWildcard
     , parseVarPattern
+    , parseParenPattern  -- Must come before parseTuplePattern to handle (h : t)
     , parseTuplePattern
     , parseListPattern
-    , parseParenPattern
     ]
     tokens
 
@@ -517,11 +530,21 @@ parseDollarExpression tokens = do
 
 parseLogicalExpression :: Array Token -> ParseResult Ast.Expr
 parseLogicalExpression tokens = do
-  Tuple left rest <- parseComparisonExpression tokens
+  Tuple left rest <- parseConsExpression tokens
   case Array.head rest of
     Just t | t.tokenType == TokOperator, t.value == "&&" || t.value == "||" -> do
       Tuple right rest' <- parseLogicalExpression (Array.drop 1 rest)
       success (Ast.ExprBinOp t.value left right) rest'
+    _ -> success left rest
+
+-- | Parse cons operator (:) - right associative, low precedence
+parseConsExpression :: Array Token -> ParseResult Ast.Expr
+parseConsExpression tokens = do
+  Tuple left rest <- parseComparisonExpression tokens
+  case Array.head rest of
+    Just t | t.tokenType == TokOperator, t.value == ":" -> do
+      Tuple right rest' <- parseConsExpression (Array.drop 1 rest)
+      success (Ast.ExprBinOp ":" left right) rest'
     _ -> success left rest
 
 parseComparisonExpression :: Array Token -> ParseResult Ast.Expr
@@ -761,7 +784,7 @@ parseRecordFieldExpr :: Array Token -> ParseResult (Tuple String Ast.Expr)
 parseRecordFieldExpr tokens = do
   Tuple label rest <- parseIdentifierName tokens
   -- Check for colon (full syntax) or shorthand (just identifier)
-  case expectDelimiter rest ":" of
+  case expectColon rest of
     Right (Tuple _ rest') -> do
       let rest'' = skipNewlines rest'
       Tuple expr rest''' <- parseExpression rest''

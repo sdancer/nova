@@ -12,19 +12,21 @@ to generate this file without the comments in this block.
 -}
 { name = "my-project"
 , dependencies =
-    [ "arrays"
-    , "console"
-    , "effect"
-    , "either"
-    , "foldable-traversable"
-    , "maybe"
-    , "node-buffer"
-    , "node-fs"
-    , "ordered-collections"
-    , "prelude"
-    , "strings"
-    , "tuples"
-    ]
+  [ "arrays"
+  , "console"
+  , "effect"
+  , "either"
+  , "foldable-traversable"
+  , "integers"
+  , "maybe"
+  , "node-buffer"
+  , "node-fs"
+  , "numbers"
+  , "ordered-collections"
+  , "prelude"
+  , "strings"
+  , "tuples"
+  ]
 , packages = ./packages.dhall
 , sources = [ "src/**/*.purs", "test/**/*.purs" ]
 }

@@ -280,7 +280,7 @@ tokenizeOperator state =
       -- Find longest matching operator
       op = findOperator remaining operators
       len = String.length op
-      tokType = if op == ":" then TokDelimiter else TokOperator
+      tokType = TokOperator
   in Just (Tuple (mkToken tokType op startLine startCol startPos) (advance state len))
 
 findOperator :: String -> Array String -> String

@@ -141,18 +141,50 @@ freeTypeVarsEnv :: Env -> Set Int
 freeTypeVarsEnv env =
   foldl (\acc s -> Set.union acc (freeTypeVarsScheme s)) Set.empty env.bindings
 
--- | Builtin prelude types
+-- | Builtin prelude types and operators
 builtinPrelude :: Map String Scheme
 builtinPrelude = Map.fromFoldable
+  -- Types
   [ Tuple "Int" (mkScheme [] tInt)
   , Tuple "String" (mkScheme [] tString)
   , Tuple "Char" (mkScheme [] tChar)
   , Tuple "Bool" (mkScheme [] tBool)
-  , Tuple "Array" (mkScheme [v1] (tArray (TyVar v1)))
-  , Tuple "List" (mkScheme [v1] (tList (TyVar v1)))
-  , Tuple "Maybe" (mkScheme [v1] (TyCon (mkTCon "Maybe" [TyVar v1])))
-  , Tuple "Either" (mkScheme [v1, v2] (TyCon (mkTCon "Either" [TyVar v1, TyVar v2])))
+  , Tuple "Array" (mkScheme [a] (tArray (TyVar a)))
+  , Tuple "List" (mkScheme [a] (tList (TyVar a)))
+  , Tuple "Maybe" (mkScheme [a] (TyCon (mkTCon "Maybe" [TyVar a])))
+  , Tuple "Either" (mkScheme [a, b] (TyCon (mkTCon "Either" [TyVar a, TyVar b])))
+  -- Arithmetic operators (Int -> Int -> Int)
+  , Tuple "+" (mkScheme [] (tArrow tInt (tArrow tInt tInt)))
+  , Tuple "-" (mkScheme [] (tArrow tInt (tArrow tInt tInt)))
+  , Tuple "*" (mkScheme [] (tArrow tInt (tArrow tInt tInt)))
+  , Tuple "/" (mkScheme [] (tArrow tInt (tArrow tInt tInt)))
+  , Tuple "mod" (mkScheme [] (tArrow tInt (tArrow tInt tInt)))
+  , Tuple "negate" (mkScheme [] (tArrow tInt tInt))
+  -- Comparison operators (Int -> Int -> Bool)
+  , Tuple "<" (mkScheme [] (tArrow tInt (tArrow tInt tBool)))
+  , Tuple ">" (mkScheme [] (tArrow tInt (tArrow tInt tBool)))
+  , Tuple "<=" (mkScheme [] (tArrow tInt (tArrow tInt tBool)))
+  , Tuple ">=" (mkScheme [] (tArrow tInt (tArrow tInt tBool)))
+  -- Polymorphic equality (a -> a -> Bool)
+  , Tuple "==" (mkScheme [a] (tArrow (TyVar a) (tArrow (TyVar a) tBool)))
+  , Tuple "/=" (mkScheme [a] (tArrow (TyVar a) (tArrow (TyVar a) tBool)))
+  -- Boolean operators
+  , Tuple "&&" (mkScheme [] (tArrow tBool (tArrow tBool tBool)))
+  , Tuple "||" (mkScheme [] (tArrow tBool (tArrow tBool tBool)))
+  , Tuple "not" (mkScheme [] (tArrow tBool tBool))
+  -- String operators
+  , Tuple "<>" (mkScheme [] (tArrow tString (tArrow tString tString)))
+  -- List/Array operators
+  , Tuple ":" (mkScheme [a] (tArrow (TyVar a) (tArrow (tArray (TyVar a)) (tArray (TyVar a)))))
+  , Tuple "++" (mkScheme [a] (tArrow (tArray (TyVar a)) (tArrow (tArray (TyVar a)) (tArray (TyVar a)))))
+  -- Function operators
+  , Tuple "$" (mkScheme [a, b] (tArrow (tArrow (TyVar a) (TyVar b)) (tArrow (TyVar a) (TyVar b))))
+  , Tuple "." (mkScheme [a, b, c] (tArrow (tArrow (TyVar b) (TyVar c)) (tArrow (tArrow (TyVar a) (TyVar b)) (tArrow (TyVar a) (TyVar c)))))
+  -- Identity and const
+  , Tuple "identity" (mkScheme [a] (tArrow (TyVar a) (TyVar a)))
+  , Tuple "const" (mkScheme [a, b] (tArrow (TyVar a) (tArrow (TyVar b) (TyVar a))))
   ]
   where
-    v1 = mkTVar (-1) "_0"
-    v2 = mkTVar (-2) "_1"
+    a = mkTVar (-1) "a"
+    b = mkTVar (-2) "b"
+    c = mkTVar (-3) "c"
