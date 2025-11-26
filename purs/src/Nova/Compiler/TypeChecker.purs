@@ -77,19 +77,29 @@ infer env (ExprQualified m name) =
       in Right { ty: r.ty, sub: emptySubst, env: r.env }
 
 infer env (ExprApp f arg) =
-  case infer env f of
-    Left e -> Left e
-    Right r1 ->
-      case infer r1.env arg of
-        Left e -> Left e
-        Right r2 ->
-          let Tuple tv env3 = freshVar r2.env "r"
-              resultTy = TyVar tv
-          in case unify (applySubst r2.sub r1.ty) (tArrow r2.ty resultTy) of
-            Left ue -> Left (UnifyErr ue)
-            Right s3 ->
-              let sub = composeSubst s3 (composeSubst r2.sub r1.sub)
-              in Right { ty: applySubst s3 resultTy, sub, env: env3 }
+  -- Special case: (-n) is parsed as ExprApp(ExprVar "-", n), treat as negation
+  case f of
+    ExprVar "-" -> case arg of
+      ExprLit (LitInt _) -> Right { ty: tInt, sub: emptySubst, env }
+      ExprLit (LitNumber _) -> Right { ty: TyCon (mkTCon "Number" []), sub: emptySubst, env }
+      ExprParens (ExprLit (LitInt _)) -> Right { ty: tInt, sub: emptySubst, env }
+      _ -> inferApp env f arg
+    _ -> inferApp env f arg
+  where
+    inferApp e func a =
+      case infer e func of
+        Left err -> Left err
+        Right r1 ->
+          case infer r1.env a of
+            Left err -> Left err
+            Right r2 ->
+              let Tuple tv env3 = freshVar r2.env "r"
+                  resultTy = TyVar tv
+              in case unify (applySubst r2.sub r1.ty) (tArrow r2.ty resultTy) of
+                Left ue -> Left (UnifyErr ue)
+                Right s3 ->
+                  let sub = composeSubst s3 (composeSubst r2.sub r1.sub)
+                  in Right { ty: applySubst s3 resultTy, sub, env: env3 }
 
 infer env (ExprLambda pats body) =
   case Array.uncons pats of
@@ -231,34 +241,34 @@ inferRecordUpdate env rec updates = do
 
 -- | Infer unary operator
 inferUnaryOp :: Env -> String -> Expr -> Either TCError InferResult
-inferUnaryOp env op e = do
-  -- Look up the operator type
-  case lookupEnv env op of
-    Nothing ->
-      -- Handle built-in unary operators
-      case op of
-        "-" -> do
-          -- Numeric negation: Int -> Int
-          res <- infer env e
-          case unify res.ty tInt of
-            Left ue -> Left (UnifyErr ue)
-            Right s -> Right { ty: tInt, sub: composeSubst s res.sub, env: res.env }
-        "!" -> do
-          -- Boolean negation: Bool -> Bool
-          res <- infer env e
-          case unify res.ty tBool of
-            Left ue -> Left (UnifyErr ue)
-            Right s -> Right { ty: tBool, sub: composeSubst s res.sub, env: res.env }
-        _ -> Left (UnboundVariable op)
-    Just scheme -> do
-      let opInst = instantiate env scheme
-      res <- infer opInst.env e
-      let Tuple resTv env2 = freshVar res.env "unary"
-      case unify opInst.ty (tArrow res.ty (TyVar resTv)) of
+inferUnaryOp env op e =
+  -- Handle built-in unary operators FIRST (before looking up binary versions)
+  case op of
+    "-" -> do
+      -- Numeric negation: Int -> Int (don't look up binary -)
+      res <- infer env e
+      case unify res.ty tInt of
         Left ue -> Left (UnifyErr ue)
-        Right s ->
-          let sub = composeSubst s res.sub
-          in Right { ty: applySubst s (TyVar resTv), sub, env: env2 }
+        Right s -> Right { ty: tInt, sub: composeSubst s res.sub, env: res.env }
+    "!" -> do
+      -- Boolean negation: Bool -> Bool
+      res <- infer env e
+      case unify res.ty tBool of
+        Left ue -> Left (UnifyErr ue)
+        Right s -> Right { ty: tBool, sub: composeSubst s res.sub, env: res.env }
+    _ ->
+      -- For other unary ops, look up in environment
+      case lookupEnv env op of
+        Nothing -> Left (UnboundVariable op)
+        Just scheme -> do
+          let opInst = instantiate env scheme
+          res <- infer opInst.env e
+          let Tuple resTv env2 = freshVar res.env "unary"
+          case unify opInst.ty (tArrow res.ty (TyVar resTv)) of
+            Left ue -> Left (UnifyErr ue)
+            Right s ->
+              let sub = composeSubst s res.sub
+              in Right { ty: applySubst s (TyVar resTv), sub, env: env2 }
 
 -- | Infer do-notation by desugaring to binds
 -- do { x <- e1; e2 } ==> e1 >>= \x -> e2

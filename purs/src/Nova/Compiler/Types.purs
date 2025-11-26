@@ -309,7 +309,10 @@ builtinPrelude = Map.fromFoldable
   -- Foldable functions
   , Tuple "foldl" (mkScheme [a, b, c] (tArrow (tArrow (TyVar b) (tArrow (TyVar a) (TyVar b))) (tArrow (TyVar b) (tArrow (TyVar c) (TyVar b))))) -- generic Foldable
   , Tuple "foldr" (mkScheme [a, b, c] (tArrow (tArrow (TyVar a) (tArrow (TyVar b) (TyVar b))) (tArrow (TyVar b) (tArrow (TyVar c) (TyVar b))))) -- generic Foldable
-  , Tuple "foldM" (mkScheme [a, b, c] (tArrow (tArrow (TyVar b) (tArrow (TyVar a) (TyVar b))) (tArrow (TyVar b) (tArrow (TyVar c) (TyVar b))))) -- generic FoldableM
+  -- foldM :: forall m a b t. Monad m => Foldable t => (b -> a -> m b) -> b -> t a -> m b
+  -- Simplified: using generic type d for "m b", and returns d (same monad result)
+  -- (b -> a -> d) -> b -> t -> d
+  , Tuple "foldM" (mkScheme [a, b, c, d] (tArrow (tArrow (TyVar b) (tArrow (TyVar a) (TyVar d))) (tArrow (TyVar b) (tArrow (TyVar c) (TyVar d)))))
 
   -- Tuple functions
   , Tuple "Tuple" (mkScheme [a, b] (tArrow (TyVar a) (tArrow (TyVar b) (tTuple [TyVar a, TyVar b]))))
