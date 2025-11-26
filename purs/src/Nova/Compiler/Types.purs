@@ -8,6 +8,8 @@ import Data.Set as Set
 import Data.Maybe (Maybe(..))
 import Data.Tuple (Tuple(..))
 import Data.Foldable (foldl)
+import Data.Array as Array
+import Data.String as String
 
 -- | Type variable identified by integer id for fast comparisons
 type TVar = { id :: Int, name :: String }
@@ -18,11 +20,19 @@ mkTVar id name = { id, name }
 -- | Type constructor with zero or more parameters
 type TCon = { name :: String, args :: Array Type }
 
+-- | Normalize a type constructor name by stripping module qualifiers
+-- | e.g., "Map.Map" -> "Map", "Data.Maybe.Maybe" -> "Maybe"
+normalizeTypeName :: String -> String
+normalizeTypeName name =
+  case String.lastIndexOf (String.Pattern ".") name of
+    Nothing -> name
+    Just idx -> String.drop (idx + 1) name
+
 mkTCon :: String -> Array Type -> TCon
-mkTCon name args = { name, args }
+mkTCon name args = { name: normalizeTypeName name, args }
 
 mkTCon0 :: String -> TCon
-mkTCon0 name = { name, args: [] }
+mkTCon0 name = { name: normalizeTypeName name, args: [] }
 
 -- | Record type with labeled fields and optional row variable
 type Record = { fields :: Map String Type, row :: Maybe TVar }
@@ -64,7 +74,7 @@ tEither :: Type -> Type -> Type
 tEither l r = TyCon (mkTCon "Either" [l, r])
 
 tMap :: Type -> Type -> Type
-tMap k v = TyCon (mkTCon "Map.Map" [k, v])  -- Use qualified name for consistency
+tMap k v = TyCon (mkTCon "Map" [k, v])  -- Use simple name to match parser output
 
 tSet :: Type -> Type
 tSet t = TyCon (mkTCon "Set" [t])
@@ -79,10 +89,12 @@ tTokenType :: Type
 tTokenType = TyCon (mkTCon0 "TokenType")
 
 tTuple :: Array Type -> Type
-tTuple ts = TyCon { name: "Tuple" <> show (length ts), args: ts }
-  where
-    length :: forall a. Array a -> Int
-    length arr = 0 -- placeholder, will use Array.length
+tTuple ts =
+  let n = Array.length ts
+      -- PureScript uses "Tuple" for 2-tuples, but we use Tuple2, Tuple3 internally
+      -- Normalize to just "Tuple" for 2-tuples to match what parser generates
+      name = if n == 2 then "Tuple" else "Tuple" <> show n
+  in TyCon { name, args: ts }
 
 -- | Substitution: Map from TVar.id to Type
 type Subst = Map Int Type
@@ -178,8 +190,15 @@ builtinPrelude = Map.fromFoldable
   , Tuple "String" (mkScheme [] tString)
   , Tuple "Char" (mkScheme [] tChar)
   , Tuple "Bool" (mkScheme [] tBool)
+  , Tuple "True" (mkScheme [] tBool)
+  , Tuple "False" (mkScheme [] tBool)
   , Tuple "Array" (mkScheme [a] (tArray (TyVar a)))
   , Tuple "List" (mkScheme [a] (tList (TyVar a)))
+  , Tuple "List.fromFoldable" (mkScheme [a] (tArrow (tArray (TyVar a)) (tList (TyVar a))))
+  , Tuple "Array.fromFoldable" (mkScheme [a] (tArrow (tList (TyVar a)) (tArray (TyVar a))))
+  , Tuple "Array.toUnfoldable" (mkScheme [a] (tArrow (tArray (TyVar a)) (tList (TyVar a))))
+  , Tuple "Cons" (mkScheme [a] (tArrow (TyVar a) (tArrow (tList (TyVar a)) (tList (TyVar a)))))
+  , Tuple "Nil" (mkScheme [a] (tList (TyVar a)))
   , Tuple "Maybe" (mkScheme [a] (TyCon (mkTCon "Maybe" [TyVar a])))
   , Tuple "Either" (mkScheme [a, b] (TyCon (mkTCon "Either" [TyVar a, TyVar b])))
   -- Arithmetic operators (Int -> Int -> Int)
@@ -201,8 +220,9 @@ builtinPrelude = Map.fromFoldable
   , Tuple "&&" (mkScheme [] (tArrow tBool (tArrow tBool tBool)))
   , Tuple "||" (mkScheme [] (tArrow tBool (tArrow tBool tBool)))
   , Tuple "not" (mkScheme [] (tArrow tBool tBool))
-  -- String operators
-  , Tuple "<>" (mkScheme [] (tArrow tString (tArrow tString tString)))
+  , Tuple "otherwise" (mkScheme [] tBool)  -- otherwise = true
+  -- Semigroup append (works on String, Array, etc.)
+  , Tuple "<>" (mkScheme [a] (tArrow (TyVar a) (tArrow (TyVar a) (TyVar a))))
   -- List/Array operators
   , Tuple ":" (mkScheme [a] (tArrow (TyVar a) (tArrow (tArray (TyVar a)) (tArray (TyVar a)))))
   , Tuple "++" (mkScheme [a] (tArrow (tArray (TyVar a)) (tArrow (tArray (TyVar a)) (tArray (TyVar a)))))
@@ -235,10 +255,12 @@ builtinPrelude = Map.fromFoldable
   , Tuple "Array.foldr" (mkScheme [a, b] (tArrow (tArrow (TyVar a) (tArrow (TyVar b) (TyVar b))) (tArrow (TyVar b) (tArrow (tArray (TyVar a)) (TyVar b)))))
   , Tuple "Array.map" (mkScheme [a, b] (tArrow (tArrow (TyVar a) (TyVar b)) (tArrow (tArray (TyVar a)) (tArray (TyVar b)))))
   , Tuple "Array.mapWithIndex" (mkScheme [a, b] (tArrow (tArrow tInt (tArrow (TyVar a) (TyVar b))) (tArrow (tArray (TyVar a)) (tArray (TyVar b)))))
+  , Tuple "mapWithIndex" (mkScheme [a, b] (tArrow (tArrow tInt (tArrow (TyVar a) (TyVar b))) (tArrow (tArray (TyVar a)) (tArray (TyVar b)))))
   , Tuple "Array.replicate" (mkScheme [a] (tArrow tInt (tArrow (TyVar a) (tArray (TyVar a)))))
-  , Tuple "Array.zip" (mkScheme [a, b] (tArrow (tArray (TyVar a)) (tArrow (tArray (TyVar b)) (tArray (TyVar a))))) -- simplified
+  , Tuple "Array.zip" (mkScheme [a, b] (tArrow (tArray (TyVar a)) (tArrow (tArray (TyVar b)) (tArray (tTuple [TyVar a, TyVar b])))))
   , Tuple "Array.dropWhile" (mkScheme [a] (tArrow (tArrow (TyVar a) tBool) (tArrow (tArray (TyVar a)) (tArray (TyVar a)))))
-  , Tuple "Array.span" (mkScheme [a] (tArrow (tArrow (TyVar a) tBool) (tArrow (tArray (TyVar a)) (tArray (TyVar a))))) -- simplified
+  , Tuple "Array.span" (mkScheme [a] (tArrow (tArrow (TyVar a) tBool) (tArrow (tArray (TyVar a)) (TyRecord { fields: Map.fromFoldable [Tuple "init" (tArray (TyVar a)), Tuple "rest" (tArray (TyVar a))], row: Nothing }))))
+  , Tuple "Array.mapMaybe" (mkScheme [a, b] (tArrow (tArrow (TyVar a) (tMaybe (TyVar b))) (tArrow (tArray (TyVar a)) (tArray (TyVar b)))))
 
   -- Char comparison (needed for isAlpha, isDigit etc)
   , Tuple "charLt" (mkScheme [] (tArrow tChar (tArrow tChar tBool)))
@@ -263,6 +285,15 @@ builtinPrelude = Map.fromFoldable
   , Tuple "CU.toCharArray" (mkScheme [] (tArrow tString (tArray tChar)))
   , Tuple "CU.fromCharArray" (mkScheme [] (tArrow (tArray tChar) tString))
 
+  -- SCU alias (same as CU but different import alias)
+  , Tuple "SCU.charAt" (mkScheme [] (tArrow tInt (tArrow tString (tMaybe tChar))))
+  , Tuple "SCU.length" (mkScheme [] (tArrow tString tInt))
+  , Tuple "SCU.drop" (mkScheme [] (tArrow tInt (tArrow tString tString)))
+  , Tuple "SCU.take" (mkScheme [] (tArrow tInt (tArrow tString tString)))
+  , Tuple "SCU.singleton" (mkScheme [] (tArrow tChar tString))
+  , Tuple "SCU.toCharArray" (mkScheme [] (tArrow tString (tArray tChar)))
+  , Tuple "SCU.fromCharArray" (mkScheme [] (tArrow (tArray tChar) tString))
+
   -- String functions
   , Tuple "String.length" (mkScheme [] (tArrow tString tInt))
   , Tuple "String.take" (mkScheme [] (tArrow tInt (tArrow tString tString)))
@@ -278,6 +309,8 @@ builtinPrelude = Map.fromFoldable
   , Tuple "String.split" (mkScheme [] (tArrow tString (tArrow tString (tArray tString))))
   , Tuple "String.stripPrefix" (mkScheme [] (tArrow tString (tArrow tString (tMaybe tString))))
   , Tuple "String.indexOf" (mkScheme [] (tArrow tString (tArrow tString (tMaybe tInt))))
+  , Tuple "String.lastIndexOf" (mkScheme [] (tArrow tString (tArrow tString (tMaybe tInt))))
+  , Tuple "String.Replacement" (mkScheme [] (tArrow tString tString))  -- Replacement constructor
 
   -- Maybe functions
   , Tuple "Just" (mkScheme [a] (tArrow (TyVar a) (tMaybe (TyVar a))))
@@ -291,6 +324,8 @@ builtinPrelude = Map.fromFoldable
   , Tuple "Left" (mkScheme [a, b] (tArrow (TyVar a) (tEither (TyVar a) (TyVar b))))
   , Tuple "Right" (mkScheme [a, b] (tArrow (TyVar b) (tEither (TyVar a) (TyVar b))))
   , Tuple "either" (mkScheme [a, b, c] (tArrow (tArrow (TyVar a) (TyVar c)) (tArrow (tArrow (TyVar b) (TyVar c)) (tArrow (tEither (TyVar a) (TyVar b)) (TyVar c)))))
+  -- Applicative/Monad pure (simplified - works for all m a)
+  , Tuple "pure" (mkScheme [a, b] (tArrow (TyVar a) (TyVar b)))
 
   -- Map functions
   , Tuple "Map.empty" (mkScheme [k, v] (tMap (TyVar k) (TyVar v)))
@@ -301,7 +336,7 @@ builtinPrelude = Map.fromFoldable
   , Tuple "Map.keys" (mkScheme [k, v] (tArrow (tMap (TyVar k) (TyVar v)) (tArray (TyVar k))))
   , Tuple "Map.values" (mkScheme [k, v] (tArrow (tMap (TyVar k) (TyVar v)) (tArray (TyVar v))))
   , Tuple "Map.union" (mkScheme [k, v] (tArrow (tMap (TyVar k) (TyVar v)) (tArrow (tMap (TyVar k) (TyVar v)) (tMap (TyVar k) (TyVar v)))))
-  , Tuple "Map.fromFoldable" (mkScheme [k, v] (tArrow (tArray (TyVar k)) (tMap (TyVar k) (TyVar v)))) -- simplified
+  , Tuple "Map.fromFoldable" (mkScheme [k, v] (tArrow (tArray (tTuple [TyVar k, TyVar v])) (tMap (TyVar k) (TyVar v))))
 
   -- Set functions
   , Tuple "Set.empty" (mkScheme [a] (tSet (TyVar a)))
@@ -322,8 +357,12 @@ builtinPrelude = Map.fromFoldable
   -- (b -> a -> d) -> b -> t -> d
   , Tuple "foldM" (mkScheme [a, b, c, d] (tArrow (tArrow (TyVar b) (tArrow (TyVar a) (TyVar d))) (tArrow (TyVar b) (tArrow (TyVar c) (TyVar d)))))
 
-  -- Tuple functions
+  -- Tuple functions and constructors
   , Tuple "Tuple" (mkScheme [a, b] (tArrow (TyVar a) (tArrow (TyVar b) (tTuple [TyVar a, TyVar b]))))
+  , Tuple "Tuple2" (mkScheme [a, b] (tArrow (TyVar a) (tArrow (TyVar b) (tTuple [TyVar a, TyVar b]))))
+  , Tuple "Tuple3" (mkScheme [a, b, c] (tArrow (TyVar a) (tArrow (TyVar b) (tArrow (TyVar c) (tTuple [TyVar a, TyVar b, TyVar c])))))
+  , Tuple "Tuple4" (mkScheme [a, b, c, d] (tArrow (TyVar a) (tArrow (TyVar b) (tArrow (TyVar c) (tArrow (TyVar d) (tTuple [TyVar a, TyVar b, TyVar c, TyVar d]))))))
+  , Tuple "Tuple5" (mkScheme [a, b, c, d, e] (tArrow (TyVar a) (tArrow (TyVar b) (tArrow (TyVar c) (tArrow (TyVar d) (tArrow (TyVar e) (tTuple [TyVar a, TyVar b, TyVar c, TyVar d, TyVar e])))))))
   , Tuple "fst" (mkScheme [a, b] (tArrow (tTuple [TyVar a, TyVar b]) (TyVar a)))
   , Tuple "snd" (mkScheme [a, b] (tArrow (tTuple [TyVar a, TyVar b]) (TyVar b)))
 
@@ -340,6 +379,11 @@ builtinPrelude = Map.fromFoldable
   , Tuple "TokDelimiter" (mkScheme [] tTokenType)
   , Tuple "TokNewline" (mkScheme [] tTokenType)
   , Tuple "TokUnrecognized" (mkScheme [] tTokenType)
+
+  -- Type data constructors (for pattern matching on Type)
+  , Tuple "TyVar" (mkScheme [] (tArrow tTVar tType))
+  , Tuple "TyCon" (mkScheme [] (tArrow tTCon tType))
+  , Tuple "TyRecord" (mkScheme [] (tArrow tRecord tType))
 
   -- Int.fromString
   , Tuple "Int.fromString" (mkScheme [] (tArrow tString (tMaybe tInt)))
@@ -361,6 +405,7 @@ builtinPrelude = Map.fromFoldable
   , Tuple "emptySubst" (mkScheme [] tSubst)
   , Tuple "lookupSubst" (mkScheme [] (tArrow tSubst (tArrow tTVar tType)))
   , Tuple "extendEnv" (mkScheme [] (tArrow tEnv (tArrow tString (tArrow tScheme tEnv))))
+  , Tuple "applySubstToEnv" (mkScheme [] (tArrow tSubst (tArrow tEnv tEnv)))
   , Tuple "lookupEnv" (mkScheme [] (tArrow tEnv (tArrow tString (tMaybe tScheme))))
   , Tuple "freshVar" (mkScheme [] (tArrow tEnv (tArrow tString (tTuple [tTVar, tEnv]))))
   , Tuple "mkScheme" (mkScheme [] (tArrow (tArray tTVar) (tArrow tType tScheme)))
@@ -384,6 +429,33 @@ builtinPrelude = Map.fromFoldable
   , Tuple "tSet" (mkScheme [] (tArrow tType tType))
   , Tuple "tList" (mkScheme [] (tArrow tType tType))
   , Tuple "tNumber" (mkScheme [] tType)
+
+  -- Unification functions (from Unify module)
+  , Tuple "unify" (mkScheme [] (tArrow tType (tArrow tType (tEither tUnifyError tSubst))))
+  , Tuple "unifyMany" (mkScheme [] (tArrow (tArray tType) (tArrow (tArray tType) (tEither tUnifyError tSubst))))
+  , Tuple "bindVar" (mkScheme [] (tArrow tTVar (tArrow tType (tEither tUnifyError tSubst))))
+  , Tuple "occurs" (mkScheme [] (tArrow tTVar (tArrow tType tBool)))
+  , Tuple "unifyRecords" (mkScheme [] (tArrow tRecord (tArrow tRecord (tEither tUnifyError tSubst))))
+  -- UnifyError constructors
+  , Tuple "OccursCheck" (mkScheme [] (tArrow tTVar (tArrow tType tUnifyError)))
+  , Tuple "TypeMismatch" (mkScheme [] (tArrow tType (tArrow tType tUnifyError)))
+  , Tuple "ArityMismatch" (mkScheme [] (tArrow tString (tArrow tInt (tArrow tInt tUnifyError))))
+  , Tuple "RecordFieldMismatch" (mkScheme [] (tArrow tString tUnifyError))
+  -- TCError constructors
+  , Tuple "UnifyErr" (mkScheme [] (tArrow tUnifyError tTCError))
+  , Tuple "UnboundVariable" (mkScheme [] (tArrow tString tTCError))
+  , Tuple "NotImplemented" (mkScheme [] (tArrow tString tTCError))
+  -- TypeChecker internal functions
+  , Tuple "inferLit" (mkScheme [] (tArrow tLiteral tType))
+  , Tuple "inferPat" (mkScheme [] (tArrow tEnv (tArrow tPattern (tArrow tType (tEither tTCError tPatResult)))))
+  , Tuple "instantiate" (mkScheme [] (tArrow tEnv (tArrow tScheme tInstantiateResult)))
+  , Tuple "infer" (mkScheme [] (tArrow tEnv (tArrow tExpr (tEither tTCError tInferResult))))
+  , Tuple "generalize" (mkScheme [] (tArrow tEnv (tArrow tType tScheme)))
+  , Tuple "checkDecl" (mkScheme [] (tArrow tEnv (tArrow tDeclaration (tEither tTCError tEnv))))
+  , Tuple "checkModule" (mkScheme [] (tArrow tEnv (tArrow (tArray tDeclaration) (tEither tTCError tEnv))))
+  , Tuple "inferDo" (mkScheme [] (tArrow tEnv (tArrow (tArray tDoStatement) (tEither tTCError tInferResult))))
+  , Tuple "inferRecordUpdate" (mkScheme [] (tArrow tEnv (tArrow tExpr (tArrow (tArray (tTuple [tString, tExpr])) (tEither tTCError tInferResult)))))
+  , Tuple "inferUnaryOp" (mkScheme [] (tArrow tEnv (tArrow tString (tArrow tExpr (tEither tTCError tInferResult)))))
 
   -- Type constructors
   , Tuple "TyVar" (mkScheme [] (tArrow tTVar tType))
@@ -420,6 +492,16 @@ builtinPrelude = Map.fromFoldable
   , Tuple "ExprRecord" (mkScheme [] (tArrow (tArray (tTuple [tString, tExpr])) tExpr))
   , Tuple "ExprRecordAccess" (mkScheme [] (tArrow tExpr (tArrow tString tExpr)))
   , Tuple "ExprParens" (mkScheme [] (tArrow tExpr tExpr))
+  , Tuple "ExprDo" (mkScheme [] (tArrow (tArray tDoStatement) tExpr))
+  , Tuple "ExprQualified" (mkScheme [] (tArrow tString (tArrow tString tExpr)))
+  , Tuple "ExprRecordUpdate" (mkScheme [] (tArrow tExpr (tArrow (tArray (tTuple [tString, tExpr])) tExpr)))
+  , Tuple "ExprTyped" (mkScheme [] (tArrow tExpr (tArrow tTypeExpr tExpr)))
+  , Tuple "ExprUnaryOp" (mkScheme [] (tArrow tString (tArrow tExpr tExpr)))
+  , Tuple "ExprTuple" (mkScheme [] (tArrow (tArray tExpr) tExpr))
+  , Tuple "ExprSection" (mkScheme [] (tArrow tString tExpr))
+  , Tuple "ExprSectionLeft" (mkScheme [] (tArrow tExpr (tArrow tString tExpr)))
+  , Tuple "ExprSectionRight" (mkScheme [] (tArrow tString (tArrow tExpr tExpr)))
+  , Tuple "ExprNegate" (mkScheme [] (tArrow tExpr tExpr))
 
   -- Literal constructors
   , Tuple "LitInt" (mkScheme [] (tArrow tInt tLiteral))
@@ -434,6 +516,10 @@ builtinPrelude = Map.fromFoldable
   , Tuple "TyExprApp" (mkScheme [] (tArrow tTypeExpr (tArrow tTypeExpr tTypeExpr)))
   , Tuple "TyExprArrow" (mkScheme [] (tArrow tTypeExpr (tArrow tTypeExpr tTypeExpr)))
   , Tuple "TyExprRecord" (mkScheme [] (tArrow (tArray (tTuple [tString, tTypeExpr])) (tArrow (tMaybe tString) tTypeExpr)))
+  , Tuple "TyExprForAll" (mkScheme [] (tArrow (tArray tString) (tArrow tTypeExpr tTypeExpr)))
+  , Tuple "TyExprTuple" (mkScheme [] (tArrow (tArray tTypeExpr) tTypeExpr))
+  , Tuple "TyExprConstrained" (mkScheme [] (tArrow (tArray tConstraint) (tArrow tTypeExpr tTypeExpr)))
+  , Tuple "TyExprParens" (mkScheme [] (tArrow tTypeExpr tTypeExpr))
 
   -- Declaration constructors
   , Tuple "DeclFunction" (mkScheme [] (tArrow tFunctionDecl tDeclaration))
@@ -465,6 +551,8 @@ builtinPrelude = Map.fromFoldable
   , Tuple "Ast.ExprSectionLeft" (mkScheme [] (tArrow tExpr (tArrow tString tExpr)))
   , Tuple "Ast.ExprSectionRight" (mkScheme [] (tArrow tString (tArrow tExpr tExpr)))
   , Tuple "Ast.ExprNegate" (mkScheme [] (tArrow tExpr tExpr))
+  , Tuple "Ast.ExprTuple" (mkScheme [] (tArrow (tArray tExpr) tExpr))
+  , Tuple "Ast.ExprUnaryOp" (mkScheme [] (tArrow tString (tArrow tExpr tExpr)))
 
   -- Pattern constructors
   , Tuple "Ast.PatVar" (mkScheme [] (tArrow tString tPattern))
@@ -491,8 +579,9 @@ builtinPrelude = Map.fromFoldable
   , Tuple "Ast.TyExprApp" (mkScheme [] (tArrow tTypeExpr (tArrow tTypeExpr tTypeExpr)))
   , Tuple "Ast.TyExprArrow" (mkScheme [] (tArrow tTypeExpr (tArrow tTypeExpr tTypeExpr)))
   , Tuple "Ast.TyExprRecord" (mkScheme [] (tArrow (tArray (tTuple [tString, tTypeExpr])) (tArrow (tMaybe tString) tTypeExpr)))
-  , Tuple "Ast.TyExprForall" (mkScheme [] (tArrow (tArray tString) (tArrow tTypeExpr tTypeExpr)))
+  , Tuple "Ast.TyExprForAll" (mkScheme [] (tArrow (tArray tString) (tArrow tTypeExpr tTypeExpr)))
   , Tuple "Ast.TyExprConstrained" (mkScheme [] (tArrow (tArray tConstraint) (tArrow tTypeExpr tTypeExpr)))
+  , Tuple "Ast.TyExprTuple" (mkScheme [] (tArrow (tArray tTypeExpr) tTypeExpr))
 
   -- Declaration constructors
   , Tuple "Ast.DeclFunction" (mkScheme [] (tArrow tFunctionDecl tDeclaration))
@@ -504,28 +593,43 @@ builtinPrelude = Map.fromFoldable
   , Tuple "Ast.DeclTypeClass" (mkScheme [] (tArrow tTypeClass tDeclaration))
   , Tuple "Ast.DeclTypeClassInstance" (mkScheme [] (tArrow tTypeClassInstance tDeclaration))
   , Tuple "Ast.DeclInfixDecl" (mkScheme [] (tArrow tInfixDecl tDeclaration))
+  , Tuple "Ast.DeclForeignImport" (mkScheme [] (tArrow tForeignImport tDeclaration))
+  , Tuple "Ast.DeclType" (mkScheme [] (tArrow tTypeDecl tDeclaration))
 
   -- DoStatement constructors
   , Tuple "Ast.DoLet" (mkScheme [] (tArrow (tArray tLetBind) tDoStatement))
   , Tuple "Ast.DoBind" (mkScheme [] (tArrow tPattern (tArrow tExpr tDoStatement)))
   , Tuple "Ast.DoExpr" (mkScheme [] (tArrow tExpr tDoStatement))
+  -- Unqualified DoStatement constructors
+  , Tuple "DoLet" (mkScheme [] (tArrow (tArray tLetBind) tDoStatement))
+  , Tuple "DoBind" (mkScheme [] (tArrow tPattern (tArrow tExpr tDoStatement)))
+  , Tuple "DoExpr" (mkScheme [] (tArrow tExpr tDoStatement))
 
   -- CaseClause and GuardedExpr/GuardClause
-  , Tuple "Ast.CaseClause" (mkScheme [] (tArrow tPattern (tArrow (tArray tGuardedExpr) tCaseClause)))
-  , Tuple "Ast.GuardedExpr" (mkScheme [] (tArrow (tArray tGuardClause) (tArrow tExpr tGuardedExpr)))
-  , Tuple "Ast.GuardClause" (mkScheme [] (tArrow tExpr tGuardClause))
+  -- Note: CaseClause and GuardedExpr are record type aliases, used with record literals
+  -- GuardClause constructors (it's a data type, not a function)
+  , Tuple "Ast.GuardExpr" (mkScheme [] (tArrow tExpr tGuardClause))
+  , Tuple "Ast.GuardPat" (mkScheme [] (tArrow tPattern (tArrow tExpr tGuardClause)))
+  , Tuple "GuardExpr" (mkScheme [] (tArrow tExpr tGuardClause))
+  , Tuple "GuardPat" (mkScheme [] (tArrow tPattern (tArrow tExpr tGuardClause)))
 
   -- LetBind
   , Tuple "Ast.LetBind" (mkScheme [] (tArrow tPattern (tArrow tExpr tLetBind)))
 
-  -- ImportItem
-  , Tuple "Ast.ImportItem" (mkScheme [] (tArrow tString tImportItem))
+  -- ImportItem constructors
+  , Tuple "Ast.ImportValue" (mkScheme [] (tArrow tString tImportItem))
+  , Tuple "Ast.ImportType" (mkScheme [] (tArrow tString (tArrow tImportSpec tImportItem)))
+  -- ImportSpec constructors
+  , Tuple "Ast.ImportAll" (mkScheme [] tImportSpec)
+  , Tuple "Ast.ImportSome" (mkScheme [] (tArrow (tArray tString) tImportSpec))
+  , Tuple "Ast.ImportNone" (mkScheme [] tImportSpec)
   ]
   where
     a = mkTVar (-1) "a"
     b = mkTVar (-2) "b"
     c = mkTVar (-3) "c"
     d = mkTVar (-6) "d"
+    e = mkTVar (-7) "e"
     k = mkTVar (-4) "k"
     v = mkTVar (-5) "v"
 
@@ -569,52 +673,167 @@ tTypeExpr :: Type
 tTypeExpr = TyCon (mkTCon0 "TypeExpr")
 
 tLetBind :: Type
-tLetBind = TyCon (mkTCon0 "LetBind")
+tLetBind = TyRecord { fields: Map.fromFoldable
+  [ Tuple "pattern" tPattern
+  , Tuple "value" tExpr
+  , Tuple "typeAnn" (tMaybe tTypeExpr)
+  ], row: Nothing }
 
 tCaseClause :: Type
-tCaseClause = TyCon (mkTCon0 "CaseClause")
+tCaseClause = TyRecord { fields: Map.fromFoldable
+  [ Tuple "pattern" tPattern
+  , Tuple "guard" (tMaybe tExpr)
+  , Tuple "body" tExpr
+  ], row: Nothing }
 
 tDeclaration :: Type
 tDeclaration = TyCon (mkTCon0 "Declaration")
 
 tFunctionDecl :: Type
-tFunctionDecl = TyCon (mkTCon0 "FunctionDeclaration")
+tFunctionDecl = TyRecord { fields: Map.fromFoldable
+  [ Tuple "name" tString
+  , Tuple "parameters" (tArray tPattern)
+  , Tuple "body" tExpr
+  , Tuple "guards" (tArray tGuardedExprRec)
+  , Tuple "typeSignature" (tMaybe tTypeSigRec)
+  ], row: Nothing }
+
+-- Record type versions for nested use (avoiding circular definition issues)
+tGuardedExprRec :: Type
+tGuardedExprRec = TyRecord { fields: Map.fromFoldable
+  [ Tuple "guards" (tArray tGuardClause)
+  , Tuple "body" tExpr
+  ], row: Nothing }
+
+tTypeSigRec :: Type
+tTypeSigRec = TyRecord { fields: Map.fromFoldable
+  [ Tuple "name" tString
+  , Tuple "typeVars" (tArray tString)
+  , Tuple "constraints" (tArray tConstraint)
+  , Tuple "ty" tTypeExpr
+  ], row: Nothing }
 
 tTypeSig :: Type
-tTypeSig = TyCon (mkTCon0 "TypeSignature")
+tTypeSig = tTypeSigRec
 
 tDataType :: Type
-tDataType = TyCon (mkTCon0 "DataType")
+tDataType = TyRecord { fields: Map.fromFoldable
+  [ Tuple "name" tString
+  , Tuple "typeVars" (tArray tString)
+  , Tuple "constructors" (tArray tDataConstructor)
+  ], row: Nothing }
+
+tDataConstructor :: Type
+tDataConstructor = TyRecord { fields: Map.fromFoldable
+  [ Tuple "name" tString
+  , Tuple "fields" (tArray tDataField)
+  , Tuple "isRecord" tBool
+  ], row: Nothing }
+
+tDataField :: Type
+tDataField = TyRecord { fields: Map.fromFoldable
+  [ Tuple "label" tString
+  , Tuple "ty" tTypeExpr
+  ], row: Nothing }
 
 tTypeAlias :: Type
-tTypeAlias = TyCon (mkTCon0 "TypeAlias")
+tTypeAlias = TyRecord { fields: Map.fromFoldable
+  [ Tuple "name" tString
+  , Tuple "typeVars" (tArray tString)
+  , Tuple "ty" tTypeExpr
+  ], row: Nothing }
 
 tModuleDecl :: Type
-tModuleDecl = TyCon (mkTCon0 "ModuleDeclaration")
+tModuleDecl = TyRecord { fields: Map.fromFoldable
+  [ Tuple "name" tString
+  ], row: Nothing }
 
 tImportDecl :: Type
-tImportDecl = TyCon (mkTCon0 "ImportDeclaration")
+tImportDecl = TyRecord { fields: Map.fromFoldable
+  [ Tuple "moduleName" tString
+  , Tuple "alias" (tMaybe tString)
+  , Tuple "items" (tArray tImportItem)
+  , Tuple "hiding" tBool
+  ], row: Nothing }
 
 tDoStatement :: Type
 tDoStatement = TyCon (mkTCon0 "DoStatement")
 
 tGuardedExpr :: Type
-tGuardedExpr = TyCon (mkTCon0 "GuardedExpr")
+tGuardedExpr = tGuardedExprRec
 
 tGuardClause :: Type
 tGuardClause = TyCon (mkTCon0 "GuardClause")
 
 tTypeClass :: Type
-tTypeClass = TyCon (mkTCon0 "TypeClass")
+tTypeClass = TyRecord { fields: Map.fromFoldable
+  [ Tuple "name" tString
+  , Tuple "typeVars" (tArray tString)
+  , Tuple "methods" (tArray tTypeSig)
+  , Tuple "kind" (tMaybe tString)
+  ], row: Nothing }
 
 tTypeClassInstance :: Type
-tTypeClassInstance = TyCon (mkTCon0 "TypeClassInstance")
+tTypeClassInstance = TyRecord { fields: Map.fromFoldable
+  [ Tuple "className" tString
+  , Tuple "ty" tTypeExpr
+  , Tuple "methods" (tArray tFunctionDecl)
+  , Tuple "derived" tBool
+  ], row: Nothing }
 
 tInfixDecl :: Type
-tInfixDecl = TyCon (mkTCon0 "InfixDeclaration")
+tInfixDecl = TyRecord { fields: Map.fromFoldable
+  [ Tuple "associativity" tString
+  , Tuple "precedence" tInt
+  , Tuple "operator" tString
+  ], row: Nothing }
 
 tConstraint :: Type
-tConstraint = TyCon (mkTCon0 "Constraint")
+tConstraint = TyRecord { fields: Map.fromFoldable
+  [ Tuple "className" tString
+  , Tuple "types" (tArray tTypeExpr)
+  ], row: Nothing }
 
 tImportItem :: Type
 tImportItem = TyCon (mkTCon0 "ImportItem")
+
+tImportSpec :: Type
+tImportSpec = TyCon (mkTCon0 "ImportSpec")
+
+tForeignImport :: Type
+tForeignImport = TyRecord { fields: Map.fromFoldable
+  [ Tuple "moduleName" tString
+  , Tuple "functionName" tString
+  , Tuple "ty" tTypeExpr
+  ], row: Nothing }
+
+tTypeDecl :: Type
+tTypeDecl = TyRecord { fields: Map.fromFoldable
+  [ Tuple "name" tString
+  , Tuple "ty" tTypeExpr
+  ], row: Nothing }
+
+tUnifyError :: Type
+tUnifyError = TyCon (mkTCon0 "UnifyError")
+
+tTCError :: Type
+tTCError = TyCon (mkTCon0 "TCError")
+
+tPatResult :: Type
+tPatResult = TyRecord { fields: Map.fromFoldable
+  [ Tuple "env" tEnv
+  , Tuple "sub" tSubst
+  ], row: Nothing }
+
+tInstantiateResult :: Type
+tInstantiateResult = TyRecord { fields: Map.fromFoldable
+  [ Tuple "ty" tType
+  , Tuple "env" tEnv
+  ], row: Nothing }
+
+tInferResult :: Type
+tInferResult = TyRecord { fields: Map.fromFoldable
+  [ Tuple "ty" tType
+  , Tuple "env" tEnv
+  , Tuple "sub" tSubst
+  ], row: Nothing }

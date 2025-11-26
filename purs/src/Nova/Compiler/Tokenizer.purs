@@ -111,7 +111,14 @@ nextToken state = do
     '-' -> case peekAt state 1 of
       Just '-' ->
         let state' = consumeLineComment (advance state 2)
-        in Just (Tuple (mkToken TokNewline "\n" state.line state.column state.pos) (advanceNewline state'))
+            -- Consume the newline character itself (if present) to avoid double-counting
+            state'' = case peek state' of
+              Just '\n' -> advance state' 1
+              Just '\r' -> case peekAt state' 1 of
+                Just '\n' -> advance state' 2  -- \r\n
+                _ -> advance state' 1  -- Just \r
+              _ -> state'  -- EOF
+        in Just (Tuple (mkToken TokNewline "\n" state.line state.column state.pos) (advanceNewline state''))
       _ -> tokenizeOperator state
 
     -- Block comment

@@ -1741,7 +1741,10 @@ parseGuardExprAtom tokens =
   let tokens' = skipNewlines tokens
   in case Array.head tokens' of
     Just tok | tok.tokenType == TokIdentifier ->
-      success (Ast.ExprVar tok.value) (Array.drop 1 tokens')
+      -- Check for record field access: r.x.y
+      let rest = Array.drop 1 tokens'
+          baseExpr = Ast.ExprVar tok.value
+      in parseRecordAccessChain baseExpr rest
     Just tok | tok.tokenType == TokNumber ->
       case Int.fromString tok.value of
         Just n -> success (Ast.ExprLit (Ast.LitInt n)) (Array.drop 1 tokens')
@@ -1766,6 +1769,18 @@ parseGuardExprAtom tokens =
           success (Ast.ExprSection ("." <> fld.value)) (Array.drop 2 tokens')
         _ -> failure "Expected field name after ."
     _ -> failure "Expected guard expression atom"
+
+-- | Parse record field access chain: .field1.field2...
+parseRecordAccessChain :: Ast.Expr -> Array Token -> ParseResult Ast.Expr
+parseRecordAccessChain expr tokens =
+  case Array.head tokens of
+    Just tok | tok.tokenType == TokOperator, tok.value == "." ->
+      case Array.head (Array.drop 1 tokens) of
+        Just fld | fld.tokenType == TokIdentifier ->
+          -- Continue parsing more field accesses
+          parseRecordAccessChain (Ast.ExprRecordAccess expr fld.value) (Array.drop 2 tokens)
+        _ -> success expr tokens  -- No field name, stop here
+    _ -> success expr tokens  -- No dot, stop here
 
 maybeParseWhere :: Array Token -> Int -> Ast.Expr -> ParseResult Ast.Expr
 maybeParseWhere tokens _ body = do

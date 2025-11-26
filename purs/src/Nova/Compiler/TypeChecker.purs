@@ -6,11 +6,19 @@ import Data.Maybe (Maybe(..))
 import Data.Tuple (Tuple(..), snd)
 import Data.Array ((:))
 import Data.Array as Array
+import Data.List (List(..))
+import Data.List as List
 import Data.Map as Map
 import Data.Set as Set
-import Nova.Compiler.Types (Type(..), TVar, Scheme, Env, Subst, emptySubst, composeSubst, applySubst, applySubstToEnv, freeTypeVars, freeTypeVarsEnv, freshVar, extendEnv, lookupEnv, mkScheme, mkTVar, mkTCon, tInt, tString, tChar, tBool, tArrow, tArray)
+import Data.String as String
+import Nova.Compiler.Types (Type(..), TVar, Scheme, Env, Subst, emptySubst, composeSubst, applySubst, applySubstToEnv, freeTypeVars, freeTypeVarsEnv, freshVar, extendEnv, lookupEnv, mkScheme, mkTVar, mkTCon, tInt, tString, tChar, tBool, tArrow, tArray, tTuple)
 import Nova.Compiler.Ast (Expr(..), Literal(..), Pattern(..), LetBind, CaseClause, Declaration(..), FunctionDeclaration, DoStatement(..), DataType, DataConstructor, DataField, TypeExpr(..), TypeAlias)
 import Nova.Compiler.Unify (UnifyError, unify)
+
+-- | Type alias info for parameterized type aliases
+-- | e.g., type ParseResult a = Either String (Tuple a (Array Token))
+-- | has params = ["a"], body = TyExprApp ...
+type TypeAliasInfo = { params :: Array String, body :: TypeExpr }
 
 -- | Type checking error
 data TCError
@@ -71,10 +79,16 @@ infer env (ExprVar name) =
 infer env (ExprQualified m name) =
   let fullName = m <> "." <> name
   in case lookupEnv env fullName of
-    Nothing -> Left (UnboundVariable fullName)
     Just scheme ->
       let r = instantiate env scheme
       in Right { ty: r.ty, sub: emptySubst, env: r.env }
+    Nothing ->
+      -- Try looking up just the name without module prefix
+      case lookupEnv env name of
+        Just scheme ->
+          let r = instantiate env scheme
+          in Right { ty: r.ty, sub: emptySubst, env: r.env }
+        Nothing -> Left (UnboundVariable fullName)
 
 infer env (ExprApp f arg) =
   -- Special case: (-n) is parsed as ExprApp(ExprVar "-", n), treat as negation
@@ -186,8 +200,8 @@ infer env (ExprTuple elems) =
   case inferMany env elems of
     Left e -> Left e
     Right res ->
-      let tupName = "Tuple" <> show (Array.length res.tys)
-      in Right { ty: TyCon (mkTCon tupName res.tys), sub: res.sub, env: res.env }
+      -- Use tTuple which normalizes Tuple2 -> Tuple for 2-tuples
+      Right { ty: tTuple res.tys, sub: res.sub, env: res.env }
 
 infer env (ExprRecord fields) =
   case inferFields env fields of
@@ -648,7 +662,12 @@ checkDecl env _ = Right env
 -- | Process a data type declaration
 -- | Adds the type constructor and all data constructors to the environment
 checkDataType :: Env -> DataType -> Env
-checkDataType env dt =
+checkDataType env dt = checkDataTypeWithAliases Map.empty env dt
+
+-- | Process a data type declaration with access to type aliases
+-- | aliasMap is Map String Type containing type alias expansions
+checkDataTypeWithAliases :: Map.Map String Type -> Env -> DataType -> Env
+checkDataTypeWithAliases aliasMap env dt =
   let -- Create type variables for the type parameters
       typeVarPairs = Array.mapWithIndex (\i v -> Tuple v (mkTVar (env.counter + i) v)) dt.typeVars
       typeVarMap = Map.fromFoldable typeVarPairs
@@ -661,7 +680,7 @@ checkDataType env dt =
 
       -- Add each constructor to the environment
       addConstructor e con =
-        let conType = buildConstructorType typeVarMap con.fields resultType
+        let conType = buildConstructorTypeWithAliases aliasMap typeVarMap con.fields resultType
             conScheme = mkScheme (map snd typeVarPairs) conType
         in extendEnv e con.name conScheme
   in Array.foldl addConstructor env1 dt.constructors
@@ -679,6 +698,199 @@ buildConstructorType varMap fields resultType = go fields
         let fieldTy = typeExprToType varMap field.ty
         in tArrow fieldTy (go rest)
 
+-- | Build constructor type with type alias lookup
+buildConstructorTypeWithAliases :: Map.Map String Type -> Map.Map String TVar -> Array DataField -> Type -> Type
+buildConstructorTypeWithAliases aliasMap varMap fields resultType = go fields
+  where
+    go [] = resultType
+    go fs = case Array.uncons fs of
+      Nothing -> resultType
+      Just { head: field, tail: rest } ->
+        let fieldTy = typeExprToTypeWithAliases aliasMap varMap field.ty
+        in tArrow fieldTy (go rest)
+
+-- | Convert a TypeExpr to a Type, looking up type aliases from maps
+-- aliasMap: simple (non-parameterized) aliases like TokState = { ... }
+-- paramAliasMap: parameterized aliases like ParseResult a = Either String (Tuple a ...)
+typeExprToTypeWithAliases :: Map.Map String Type -> Map.Map String TVar -> TypeExpr -> Type
+typeExprToTypeWithAliases aliasMap varMap expr =
+  typeExprToTypeWithAllAliases aliasMap Map.empty varMap expr
+
+-- | Full type conversion with both simple and parameterized aliases
+typeExprToTypeWithAllAliases :: Map.Map String Type -> Map.Map String TypeAliasInfo -> Map.Map String TVar -> TypeExpr -> Type
+typeExprToTypeWithAllAliases aliasMap paramAliasMap varMap (TyExprVar name) =
+  case Map.lookup name varMap of
+    Just tv -> TyVar tv
+    Nothing -> TyCon (mkTCon name [])
+typeExprToTypeWithAllAliases aliasMap paramAliasMap varMap (TyExprCon name) =
+  -- Try both qualified name and unqualified name (strip module prefix)
+  let unqualifiedName = case String.lastIndexOf (String.Pattern ".") name of
+        Just idx -> String.drop (idx + 1) name
+        Nothing -> name
+      -- Check if it's a simple type alias we should expand
+      tryLookup nm = case Map.lookup nm aliasMap of
+        Just ty -> Just ty
+        Nothing -> case Map.lookup nm paramAliasMap of
+          Just info | Array.null info.params ->
+            Just (typeExprToTypeWithAllAliases aliasMap paramAliasMap varMap info.body)
+          _ -> Nothing
+  in case tryLookup name of
+    Just ty -> ty
+    Nothing -> case tryLookup unqualifiedName of
+      Just ty -> ty
+      Nothing ->
+        -- Not an alias or needs params, treat as type constructor
+        typeExprToType varMap (TyExprCon name)
+typeExprToTypeWithAllAliases aliasMap paramAliasMap varMap (TyExprApp f arg) =
+  -- Check if this is a parameterized alias application
+  case collectTypeApp (TyExprApp f arg) of
+    Tuple conName args ->
+      case Map.lookup conName paramAliasMap of
+        Just info | Array.length info.params == Array.length args ->
+          -- Found matching parameterized alias, substitute params
+          let argTypes = map (typeExprToTypeWithAllAliases aliasMap paramAliasMap varMap) args
+              paramSubst = Map.fromFoldable (Array.zip info.params argTypes)
+          in substituteTypeExpr aliasMap paramAliasMap paramSubst info.body
+        _ ->
+          -- Not a parameterized alias or wrong arity, normal type application
+          case typeExprToTypeWithAllAliases aliasMap paramAliasMap varMap f of
+            TyCon tc -> TyCon { name: tc.name, args: Array.snoc tc.args (typeExprToTypeWithAllAliases aliasMap paramAliasMap varMap arg) }
+            other -> other
+typeExprToTypeWithAllAliases aliasMap paramAliasMap varMap (TyExprArrow a b) =
+  tArrow (typeExprToTypeWithAllAliases aliasMap paramAliasMap varMap a) (typeExprToTypeWithAllAliases aliasMap paramAliasMap varMap b)
+typeExprToTypeWithAllAliases aliasMap paramAliasMap varMap (TyExprRecord fields maybeRow) =
+  let fieldMap = Map.fromFoldable (map (\(Tuple l t) -> Tuple l (typeExprToTypeWithAllAliases aliasMap paramAliasMap varMap t)) fields)
+      row = case maybeRow of
+        Just r -> case Map.lookup r varMap of
+          Just tv -> Just tv
+          Nothing -> Nothing
+        Nothing -> Nothing
+  in TyRecord { fields: fieldMap, row }
+typeExprToTypeWithAllAliases aliasMap paramAliasMap varMap (TyExprForAll vars t) =
+  -- Add forall-bound type variables to varMap
+  let varList = Array.mapWithIndex (\i name -> Tuple name (mkTVar (-(i + 1)) name)) vars
+      newVarMap = Map.union (Map.fromFoldable varList) varMap
+  in typeExprToTypeWithAllAliases aliasMap paramAliasMap newVarMap t
+typeExprToTypeWithAllAliases aliasMap paramAliasMap varMap (TyExprConstrained _ t) = typeExprToTypeWithAllAliases aliasMap paramAliasMap varMap t
+typeExprToTypeWithAllAliases aliasMap paramAliasMap varMap (TyExprParens t) = typeExprToTypeWithAllAliases aliasMap paramAliasMap varMap t
+typeExprToTypeWithAllAliases aliasMap paramAliasMap varMap (TyExprTuple ts) =
+  tTuple (map (typeExprToTypeWithAllAliases aliasMap paramAliasMap varMap) ts)
+
+-- | Convert type expression to type, with access to env for resolving type aliases from imports
+typeExprToTypeWithEnv :: Env -> Map.Map String Type -> Map.Map String TypeAliasInfo -> Map.Map String TVar -> TypeExpr -> Type
+typeExprToTypeWithEnv env aliasMap paramAliasMap varMap (TyExprVar name) =
+  case Map.lookup name varMap of
+    Just tv -> TyVar tv
+    Nothing -> TyCon (mkTCon name [])
+typeExprToTypeWithEnv env aliasMap paramAliasMap varMap (TyExprCon name) =
+  -- Try both qualified name and unqualified name (strip module prefix)
+  let unqualifiedName = case String.lastIndexOf (String.Pattern ".") name of
+        Just idx -> String.drop (idx + 1) name
+        Nothing -> name
+      -- Check if it's a simple type alias in local maps
+      tryLookup nm = case Map.lookup nm aliasMap of
+        Just ty -> Just ty
+        Nothing -> case Map.lookup nm paramAliasMap of
+          Just info | Array.null info.params ->
+            Just (typeExprToTypeWithEnv env aliasMap paramAliasMap varMap info.body)
+          _ -> Nothing
+      -- Check if it's a type alias in the environment (from imported modules)
+      tryEnvLookup nm = case lookupEnv env nm of
+        Just scheme -> Just scheme.ty
+        Nothing -> Nothing
+  in case tryLookup name of
+    Just ty -> ty
+    Nothing -> case tryLookup unqualifiedName of
+      Just ty -> ty
+      Nothing -> case tryEnvLookup name of
+        Just ty -> ty
+        Nothing -> case tryEnvLookup unqualifiedName of
+          Just ty -> ty
+          Nothing ->
+            -- Not an alias or needs params, treat as type constructor
+            typeExprToType varMap (TyExprCon name)
+typeExprToTypeWithEnv env aliasMap paramAliasMap varMap (TyExprApp f arg) =
+  -- Check if this is a parameterized alias application
+  case collectTypeApp (TyExprApp f arg) of
+    Tuple conName args ->
+      case Map.lookup conName paramAliasMap of
+        Just info | Array.length info.params == Array.length args ->
+          -- Found matching parameterized alias, substitute params
+          let argTypes = map (typeExprToTypeWithEnv env aliasMap paramAliasMap varMap) args
+              paramSubst = Map.fromFoldable (Array.zip info.params argTypes)
+          in substituteTypeExpr aliasMap paramAliasMap paramSubst info.body
+        _ ->
+          -- Not a parameterized alias or wrong arity, normal type application
+          case typeExprToTypeWithEnv env aliasMap paramAliasMap varMap f of
+            TyCon tc -> TyCon { name: tc.name, args: Array.snoc tc.args (typeExprToTypeWithEnv env aliasMap paramAliasMap varMap arg) }
+            other -> other
+typeExprToTypeWithEnv env aliasMap paramAliasMap varMap (TyExprArrow a b) =
+  tArrow (typeExprToTypeWithEnv env aliasMap paramAliasMap varMap a) (typeExprToTypeWithEnv env aliasMap paramAliasMap varMap b)
+typeExprToTypeWithEnv env aliasMap paramAliasMap varMap (TyExprRecord fields maybeRow) =
+  let fieldMap = Map.fromFoldable (map (\(Tuple l t) -> Tuple l (typeExprToTypeWithEnv env aliasMap paramAliasMap varMap t)) fields)
+      row = case maybeRow of
+        Just r -> case Map.lookup r varMap of
+          Just tv -> Just tv
+          Nothing -> Nothing
+        Nothing -> Nothing
+  in TyRecord { fields: fieldMap, row }
+typeExprToTypeWithEnv env aliasMap paramAliasMap varMap (TyExprForAll vars t) =
+  let varList = Array.mapWithIndex (\i name -> Tuple name (mkTVar (-(i + 1)) name)) vars
+      newVarMap = Map.union (Map.fromFoldable varList) varMap
+  in typeExprToTypeWithEnv env aliasMap paramAliasMap newVarMap t
+typeExprToTypeWithEnv env aliasMap paramAliasMap varMap (TyExprConstrained _ t) =
+  typeExprToTypeWithEnv env aliasMap paramAliasMap varMap t
+typeExprToTypeWithEnv env aliasMap paramAliasMap varMap (TyExprParens t) =
+  typeExprToTypeWithEnv env aliasMap paramAliasMap varMap t
+typeExprToTypeWithEnv env aliasMap paramAliasMap varMap (TyExprTuple ts) =
+  tTuple (map (typeExprToTypeWithEnv env aliasMap paramAliasMap varMap) ts)
+
+-- | Collect type application into constructor name and arguments
+-- | e.g., TyExprApp (TyExprApp (TyExprCon "Either") a) b -> ("Either", [a, b])
+collectTypeApp :: TypeExpr -> Tuple String (Array TypeExpr)
+collectTypeApp (TyExprCon name) = Tuple name []
+collectTypeApp (TyExprApp f arg) =
+  let Tuple name args = collectTypeApp f
+  in Tuple name (Array.snoc args arg)
+collectTypeApp _ = Tuple "" []
+
+-- | Substitute type variables in a TypeExpr and convert to Type
+-- | paramSubst maps type variable names to their substituted Types
+substituteTypeExpr :: Map.Map String Type -> Map.Map String TypeAliasInfo -> Map.Map String Type -> TypeExpr -> Type
+substituteTypeExpr aliasMap paramAliasMap paramSubst (TyExprVar name) =
+  case Map.lookup name paramSubst of
+    Just ty -> ty
+    Nothing -> TyCon (mkTCon name [])
+substituteTypeExpr aliasMap paramAliasMap paramSubst (TyExprCon name) =
+  case Map.lookup name aliasMap of
+    Just ty -> ty
+    Nothing ->
+      -- Fall back to typeExprToType which has hardcoded aliases like Token
+      typeExprToType Map.empty (TyExprCon name)
+substituteTypeExpr aliasMap paramAliasMap paramSubst (TyExprApp f arg) =
+  -- Check if this is a nested parameterized alias
+  case collectTypeApp (TyExprApp f arg) of
+    Tuple conName args ->
+      case Map.lookup conName paramAliasMap of
+        Just info | Array.length info.params == Array.length args ->
+          let argTypes = map (substituteTypeExpr aliasMap paramAliasMap paramSubst) args
+              nestedSubst = Map.fromFoldable (Array.zip info.params argTypes)
+          in substituteTypeExpr aliasMap paramAliasMap nestedSubst info.body
+        _ ->
+          case substituteTypeExpr aliasMap paramAliasMap paramSubst f of
+            TyCon tc -> TyCon { name: tc.name, args: Array.snoc tc.args (substituteTypeExpr aliasMap paramAliasMap paramSubst arg) }
+            other -> other
+substituteTypeExpr aliasMap paramAliasMap paramSubst (TyExprArrow a b) =
+  tArrow (substituteTypeExpr aliasMap paramAliasMap paramSubst a) (substituteTypeExpr aliasMap paramAliasMap paramSubst b)
+substituteTypeExpr aliasMap paramAliasMap paramSubst (TyExprRecord fields maybeRow) =
+  let fieldMap = Map.fromFoldable (map (\(Tuple l t) -> Tuple l (substituteTypeExpr aliasMap paramAliasMap paramSubst t)) fields)
+  in TyRecord { fields: fieldMap, row: Nothing }
+substituteTypeExpr aliasMap paramAliasMap paramSubst (TyExprTuple ts) =
+  tTuple (map (substituteTypeExpr aliasMap paramAliasMap paramSubst) ts)
+substituteTypeExpr aliasMap paramAliasMap paramSubst (TyExprParens t) = substituteTypeExpr aliasMap paramAliasMap paramSubst t
+substituteTypeExpr aliasMap paramAliasMap paramSubst (TyExprForAll _ t) = substituteTypeExpr aliasMap paramAliasMap paramSubst t
+substituteTypeExpr aliasMap paramAliasMap paramSubst (TyExprConstrained _ t) = substituteTypeExpr aliasMap paramAliasMap paramSubst t
+
 -- | Convert a TypeExpr to a Type using the variable mapping
 typeExprToType :: Map.Map String TVar -> TypeExpr -> Type
 typeExprToType varMap (TyExprVar name) =
@@ -694,18 +906,34 @@ typeExprToType varMap (TyExprCon name) =
     "TVar" -> TyRecord { fields: Map.fromFoldable [Tuple "id" tInt, Tuple "name" tString], row: Nothing }
     "Token" -> TyRecord { fields: Map.fromFoldable [Tuple "tokenType" (TyCon (mkTCon "TokenType" [])), Tuple "value" tString, Tuple "line" tInt, Tuple "column" tInt, Tuple "pos" tInt], row: Nothing }
     -- Type aliases from Types.purs
-    "Subst" -> TyCon (mkTCon "Map.Map" [tInt, tTypeHolder])
-    "Env" -> TyRecord { fields: Map.fromFoldable [Tuple "bindings" (TyCon (mkTCon "Map.Map" [tString, tSchemeHolder])), Tuple "counter" tInt, Tuple "registryLayer" (TyCon (mkTCon "Maybe" [tInt])), Tuple "namespace" (TyCon (mkTCon "Maybe" [tString]))], row: Nothing }
+    "Subst" -> TyCon (mkTCon "Map" [tInt, tTypeHolder])
+    "Env" -> TyRecord { fields: Map.fromFoldable [Tuple "bindings" (TyCon (mkTCon "Map" [tString, tSchemeHolder])), Tuple "counter" tInt, Tuple "registryLayer" (TyCon (mkTCon "Maybe" [tInt])), Tuple "namespace" (TyCon (mkTCon "Maybe" [tString]))], row: Nothing }
     "Scheme" -> TyRecord { fields: Map.fromFoldable [Tuple "vars" (tArray tTVarHolder), Tuple "ty" tTypeHolder], row: Nothing }
     -- FunctionDeclaration record type alias
     "FunctionDeclaration" -> TyRecord { fields: Map.fromFoldable [Tuple "name" tString, Tuple "parameters" (tArray tPatternHolder), Tuple "body" tExprHolder, Tuple "guards" (tArray tGuardedExprHolder), Tuple "typeSignature" (TyCon (mkTCon "Maybe" [tTypeSigHolder])), Tuple "whereBindings" (tArray tLetBindHolder)], row: Nothing }
     "DataConstructor" -> TyRecord { fields: Map.fromFoldable [Tuple "name" tString, Tuple "fields" (tArray tDataFieldHolder)], row: Nothing }
     "DataField" -> TyRecord { fields: Map.fromFoldable [Tuple "name" (TyCon (mkTCon "Maybe" [tString])), Tuple "ty" tTypeExprHolder], row: Nothing }
     "TypeSignature" -> TyRecord { fields: Map.fromFoldable [Tuple "name" tString, Tuple "typeVars" (tArray tString), Tuple "constraints" (tArray tConstraintHolder), Tuple "ty" tTypeExprHolder], row: Nothing }
-    "LetBind" -> TyRecord { fields: Map.fromFoldable [Tuple "pattern" tPatternHolder, Tuple "value" tExprHolder], row: Nothing }
-    "CaseClause" -> TyRecord { fields: Map.fromFoldable [Tuple "pattern" tPatternHolder, Tuple "guards" (tArray tGuardedExprHolder)], row: Nothing }
-    "GuardedExpr" -> TyRecord { fields: Map.fromFoldable [Tuple "guards" (tArray tGuardClauseHolder), Tuple "expr" tExprHolder], row: Nothing }
-    "GuardClause" -> TyRecord { fields: Map.fromFoldable [Tuple "expr" tExprHolder], row: Nothing }
+    "LetBind" -> TyRecord { fields: Map.fromFoldable [Tuple "pattern" tPatternHolder, Tuple "value" tExprHolder, Tuple "typeAnn" (TyCon (mkTCon "Maybe" [tTypeExprHolder]))], row: Nothing }
+    "Ast.LetBind" -> TyRecord { fields: Map.fromFoldable [Tuple "pattern" tPatternHolder, Tuple "value" tExprHolder, Tuple "typeAnn" (TyCon (mkTCon "Maybe" [tTypeExprHolder]))], row: Nothing }
+    "CaseClause" -> TyRecord { fields: Map.fromFoldable [Tuple "pattern" tPatternHolder, Tuple "guard" (TyCon (mkTCon "Maybe" [tExprHolder])), Tuple "body" tExprHolder], row: Nothing }
+    "Ast.CaseClause" -> TyRecord { fields: Map.fromFoldable [Tuple "pattern" tPatternHolder, Tuple "guard" (TyCon (mkTCon "Maybe" [tExprHolder])), Tuple "body" tExprHolder], row: Nothing }
+    "GuardedExpr" -> TyRecord { fields: Map.fromFoldable [Tuple "guards" (tArray tGuardClauseHolder), Tuple "body" tExprHolder], row: Nothing }
+    "Ast.GuardedExpr" -> TyRecord { fields: Map.fromFoldable [Tuple "guards" (tArray tGuardClauseHolder), Tuple "body" tExprHolder], row: Nothing }
+    "GuardClause" -> TyCon (mkTCon "GuardClause" [])  -- GuardClause is an ADT with constructors GuardExpr and GuardPat
+    "Ast.GuardClause" -> TyCon (mkTCon "GuardClause" [])
+    "Constraint" -> TyRecord { fields: Map.fromFoldable [Tuple "className" tString, Tuple "types" (tArray tTypeExprHolder)], row: Nothing }
+    "Ast.Constraint" -> TyRecord { fields: Map.fromFoldable [Tuple "className" tString, Tuple "types" (tArray tTypeExprHolder)], row: Nothing }
+    "TypeAlias" -> TyRecord { fields: Map.fromFoldable [Tuple "name" tString, Tuple "typeVars" (tArray tString), Tuple "ty" tTypeExprHolder], row: Nothing }
+    "Ast.TypeAlias" -> TyRecord { fields: Map.fromFoldable [Tuple "name" tString, Tuple "typeVars" (tArray tString), Tuple "ty" tTypeExprHolder], row: Nothing }
+    "DataType" -> TyRecord { fields: Map.fromFoldable [Tuple "name" tString, Tuple "typeVars" (tArray tString), Tuple "constructors" (tArray tDataConstructorHolder)], row: Nothing }
+    "Ast.DataType" -> TyRecord { fields: Map.fromFoldable [Tuple "name" tString, Tuple "typeVars" (tArray tString), Tuple "constructors" (tArray tDataConstructorHolder)], row: Nothing }
+    "DataConstructor" -> TyRecord { fields: Map.fromFoldable [Tuple "name" tString, Tuple "fields" (tArray tDataFieldHolder), Tuple "isRecord" tBool], row: Nothing }
+    "Ast.DataConstructor" -> TyRecord { fields: Map.fromFoldable [Tuple "name" tString, Tuple "fields" (tArray tDataFieldHolder), Tuple "isRecord" tBool], row: Nothing }
+    "ImportDeclaration" -> TyRecord { fields: Map.fromFoldable [Tuple "moduleName" tString, Tuple "alias" (TyCon (mkTCon "Maybe" [tString])), Tuple "items" (tArray (TyCon (mkTCon "ImportItem" []))), Tuple "hiding" tBool], row: Nothing }
+    "ModuleDeclaration" -> TyRecord { fields: Map.fromFoldable [Tuple "name" tString], row: Nothing }
+    "GenCtx" -> TyRecord { fields: Map.fromFoldable [Tuple "moduleFuncs" (TyCon (mkTCon "Set" [tString])), Tuple "locals" (TyCon (mkTCon "Set" [tString]))], row: Nothing }
+    "Module" -> TyRecord { fields: Map.fromFoldable [Tuple "name" tString, Tuple "declarations" (tArray (TyCon (mkTCon "Declaration" [])))], row: Nothing }
     _ -> TyCon (mkTCon name [])
   where
     -- Avoid circular dependency with tType
@@ -714,13 +942,14 @@ typeExprToType varMap (TyExprCon name) =
     tSchemeHolder = TyRecord { fields: Map.fromFoldable [Tuple "vars" (tArray tTVarHolder), Tuple "ty" tTypeHolder], row: Nothing }
     tPatternHolder = TyCon (mkTCon "Pattern" [])
     tExprHolder = TyCon (mkTCon "Expr" [])
-    tTypeSigHolder = TyRecord { fields: Map.fromFoldable [Tuple "name" tString, Tuple "typeVars" (tArray tString), Tuple "constraints" (tArray (TyCon (mkTCon "Constraint" []))), Tuple "ty" (TyCon (mkTCon "TypeExpr" []))], row: Nothing }
-    tLetBindHolder = TyRecord { fields: Map.fromFoldable [Tuple "pattern" tPatternHolder, Tuple "value" tExprHolder], row: Nothing }
-    tGuardedExprHolder = TyRecord { fields: Map.fromFoldable [Tuple "guards" (tArray tGuardClauseHolder), Tuple "expr" tExprHolder], row: Nothing }
-    tGuardClauseHolder = TyRecord { fields: Map.fromFoldable [Tuple "expr" tExprHolder], row: Nothing }
-    tDataFieldHolder = TyRecord { fields: Map.fromFoldable [Tuple "name" (TyCon (mkTCon "Maybe" [tString])), Tuple "ty" (TyCon (mkTCon "TypeExpr" []))], row: Nothing }
+    tTypeSigHolder = TyRecord { fields: Map.fromFoldable [Tuple "name" tString, Tuple "typeVars" (tArray tString), Tuple "constraints" (tArray tConstraintHolder), Tuple "ty" tTypeExprHolder], row: Nothing }
+    tLetBindHolder = TyRecord { fields: Map.fromFoldable [Tuple "pattern" tPatternHolder, Tuple "value" tExprHolder, Tuple "typeAnn" (TyCon (mkTCon "Maybe" [tTypeExprHolder]))], row: Nothing }
+    tGuardedExprHolder = TyRecord { fields: Map.fromFoldable [Tuple "guards" (tArray tGuardClauseHolder), Tuple "body" tExprHolder], row: Nothing }
+    tGuardClauseHolder = TyCon (mkTCon "GuardClause" [])  -- ADT not a record
+    tDataFieldHolder = TyRecord { fields: Map.fromFoldable [Tuple "label" tString, Tuple "ty" tTypeExprHolder], row: Nothing }
+    tDataConstructorHolder = TyRecord { fields: Map.fromFoldable [Tuple "name" tString, Tuple "fields" (tArray tDataFieldHolder), Tuple "isRecord" tBool], row: Nothing }
     tTypeExprHolder = TyCon (mkTCon "TypeExpr" [])
-    tConstraintHolder = TyCon (mkTCon "Constraint" [])
+    tConstraintHolder = TyRecord { fields: Map.fromFoldable [Tuple "className" tString, Tuple "types" (tArray tTypeExprHolder)], row: Nothing }
 typeExprToType varMap (TyExprApp f arg) =
   case typeExprToType varMap f of
     TyCon tc -> TyCon { name: tc.name, args: Array.snoc tc.args (typeExprToType varMap arg) }
@@ -735,19 +964,24 @@ typeExprToType varMap (TyExprRecord fields maybeRow) =
           Nothing -> Nothing
         Nothing -> Nothing
   in TyRecord { fields: fieldMap, row }
-typeExprToType varMap (TyExprForAll _ t) = typeExprToType varMap t  -- Ignore forall for now
+typeExprToType varMap (TyExprForAll vars t) =
+  -- Add forall-bound type variables to varMap
+  -- Use negative IDs since these are quantified variables that will be instantiated later
+  let varList = Array.mapWithIndex (\i name -> Tuple name (mkTVar (-(i + 1)) name)) vars
+      newVarMap = Map.union (Map.fromFoldable varList) varMap  -- New vars shadow old ones
+  in typeExprToType newVarMap t
 typeExprToType varMap (TyExprConstrained _ t) = typeExprToType varMap t  -- Ignore constraints
 typeExprToType varMap (TyExprParens t) = typeExprToType varMap t
 typeExprToType varMap (TyExprTuple ts) =
-  let tupName = "Tuple" <> show (Array.length ts)
-  in TyCon (mkTCon tupName (map (typeExprToType varMap) ts))
+  -- Use tTuple to normalize tuple names (Tuple for 2-tuples)
+  tTuple (map (typeExprToType varMap) ts)
 
 -- | Process a type alias declaration
 checkTypeAlias :: Env -> TypeAlias -> Env
 checkTypeAlias env ta =
-  -- For now, just add the alias name as a type constructor
-  -- A full implementation would expand aliases during type checking
-  let scheme = mkScheme [] (TyCon (mkTCon ta.name []))
+  -- Convert the type expression to an actual Type and store it
+  let ty = typeExprToType Map.empty ta.ty
+      scheme = mkScheme [] ty
   in extendEnv env ta.name scheme
 
 -- | Type check a module with two-pass approach for forward references
@@ -762,50 +996,85 @@ checkModule env decls =
   -- Pass 3: Type check all function bodies
   in checkFunctionBodies env2 decls
 
--- | Process non-function declarations (data types, type aliases, imports, type sigs)
-processNonFunctions :: Env -> Array Declaration -> Env
-processNonFunctions env decls = Array.foldl processOne env decls
+-- | Collect type aliases from declarations into a Map String Type
+-- | For non-parameterized aliases only (backward compatible)
+collectTypeAliases :: Array Declaration -> Map.Map String Type
+collectTypeAliases decls = Array.foldl collect Map.empty decls
   where
-    processOne e (DeclDataType dt) = checkDataType e dt
-    processOne e (DeclTypeAlias ta) = checkTypeAlias e ta
-    processOne e _ = e  -- Skip functions for now
+    collect m (DeclTypeAlias ta)
+      | Array.null ta.typeVars = Map.insert ta.name (typeExprToType Map.empty ta.ty) m
+      | otherwise = m  -- Skip parameterized aliases here
+    collect m _ = m
+
+-- | Collect parameterized type aliases into a Map String TypeAliasInfo
+collectParamTypeAliases :: Array Declaration -> Map.Map String TypeAliasInfo
+collectParamTypeAliases decls = Array.foldl collect Map.empty decls
+  where
+    collect m (DeclTypeAlias ta) = Map.insert ta.name { params: ta.typeVars, body: ta.ty } m
+    collect m _ = m
+
+-- | Process non-function declarations (data types, type aliases, imports, type sigs)
+-- Process in two phases: type aliases first, then data types
+-- This ensures type aliases are available when processing data constructor fields
+processNonFunctions :: Env -> Array Declaration -> Env
+processNonFunctions env decls =
+  let -- Phase 1: Collect all type aliases into maps
+      aliasMap = collectTypeAliases decls
+      paramAliasMap = collectParamTypeAliases decls
+      -- Also add aliases to env for other purposes
+      env1 = Array.foldl processTypeAlias env decls
+      -- Phase 2: Process data types (with type aliases available)
+      env2 = Array.foldl (processDataType aliasMap paramAliasMap) env1 decls
+  in env2
+  where
+    processTypeAlias e (DeclTypeAlias ta) = checkTypeAlias e ta
+    processTypeAlias e _ = e
+
+    processDataType aliasM paramAliasM e (DeclDataType dt) = checkDataTypeWithAliases aliasM e dt
+    processDataType _ _ e _ = e
 
 -- | Add placeholder types for all functions
 -- Uses type signature if available, otherwise creates a fresh type variable
 addFunctionPlaceholders :: Env -> Array Declaration -> Env
 addFunctionPlaceholders env decls =
-  let -- Collect standalone type signatures into a map
+  let -- Collect type aliases for expanding type signatures
+      aliasMap = collectTypeAliases decls
+      paramAliasMap = collectParamTypeAliases decls
+      -- Collect standalone type signatures into a map
       sigMap = Array.foldl collectSig Map.empty decls
       -- Add placeholders for all functions
-  in Array.foldl (addPlaceholder sigMap) env decls
+  in Array.foldl (addPlaceholder aliasMap paramAliasMap sigMap) env decls
   where
     collectSig m (DeclTypeSig sig) = Map.insert sig.name sig.ty m
     collectSig m _ = m
 
-    addPlaceholder sigs e (DeclFunction func) =
+    addPlaceholder aliasM paramAliasM sigs e (DeclFunction func) =
       -- First check embedded type signature in the function (func.typeSignature is Maybe TypeSignature)
       case func.typeSignature of
         Just sig ->
           -- sig is a TypeSignature record with { name, typeVars, constraints, ty }
-          let ty = typeExprToType Map.empty sig.ty
+          let ty = typeExprToTypeWithAllAliases aliasM paramAliasM Map.empty sig.ty
               scheme = mkScheme [] ty
           in extendEnv e func.name scheme
         Nothing ->
           -- Then check standalone signatures
           case Map.lookup func.name sigs of
             Just tyExpr ->
-              let ty = typeExprToType Map.empty tyExpr
+              let ty = typeExprToTypeWithAllAliases aliasM paramAliasM Map.empty tyExpr
                   scheme = mkScheme [] ty
               in extendEnv e func.name scheme
             Nothing ->
               -- No signature, add fresh type variable
               let Tuple tv e' = freshVar e ("fn_" <> func.name)
               in extendEnv e' func.name (mkScheme [] (TyVar tv))
-    addPlaceholder _ e _ = e
+    addPlaceholder _ _ _ e _ = e
 
 -- | Type check all function bodies
+-- Handles multi-clause functions by merging adjacent declarations with the same name
 checkFunctionBodies :: Env -> Array Declaration -> Either TCError Env
-checkFunctionBodies env decls = go env decls
+checkFunctionBodies env decls =
+  let mergedDecls = mergeMultiClauseFunctions decls
+  in go env mergedDecls
   where
     go e [] = Right e
     go e ds = case Array.uncons ds of
@@ -815,3 +1084,73 @@ checkFunctionBodies env decls = go env decls
           Left err -> Left err
           Right r -> go r.env rest
       Just { head: _, tail: rest } -> go e rest
+
+-- | Merge adjacent function declarations with the same name into single functions
+-- Converts: f (Pat1) = body1; f (Pat2) = body2
+-- Into:     f x = case x of Pat1 -> body1; Pat2 -> body2
+mergeMultiClauseFunctions :: Array Declaration -> Array Declaration
+mergeMultiClauseFunctions decls = Array.fromFoldable (go (Array.toUnfoldable decls) [])
+  where
+    go :: List Declaration -> Array Declaration -> List Declaration
+    go Nil acc = List.fromFoldable (Array.reverse acc)
+    go (Cons d rest) acc = case d of
+      DeclFunction func ->
+        -- Collect all adjacent functions with the same name
+        let Tuple sameName remaining = collectSameName func.name rest Nil
+            allClauses = Array.cons func (Array.fromFoldable sameName)
+        in if Array.length allClauses > 1
+           then go remaining (Array.cons (DeclFunction (mergeClausesIntoOne allClauses)) acc)
+           else go rest (Array.cons d acc)
+      _ -> go rest (Array.cons d acc)
+
+    -- Collect adjacent DeclFunction with same name
+    collectSameName :: String -> List Declaration -> List FunctionDeclaration -> Tuple (List FunctionDeclaration) (List Declaration)
+    collectSameName name Nil acc = Tuple acc Nil
+    collectSameName name (Cons (DeclFunction f) rest) acc
+      | f.name == name = collectSameName name rest (List.Cons f acc)
+    collectSameName _ remaining acc = Tuple acc remaining
+
+    -- Merge multiple function clauses into one with case expression
+    mergeClausesIntoOne :: Array FunctionDeclaration -> FunctionDeclaration
+    mergeClausesIntoOne clauses =
+      case Array.head clauses of
+        Nothing -> { name: "", parameters: [], body: ExprVar "error", guards: [], typeSignature: Nothing }
+        Just first ->
+          let name = first.name
+              -- All clauses should have same number of parameters
+              numParams = Array.length first.parameters
+              -- Create fresh parameter names
+              paramNames = Array.mapWithIndex (\i _ -> "__arg" <> show i) first.parameters
+              paramPats = map PatVar paramNames
+              paramVars = map ExprVar paramNames
+              -- Build case clauses from each function clause
+              caseClauses = Array.mapMaybe (clauseToCaseClause paramVars) clauses
+              -- Build case expression or tuple case for multiple params
+              caseExpr = case numParams of
+                0 -> first.body  -- No params, just use first body
+                1 -> case Array.head paramVars of
+                  Just v -> ExprCase v caseClauses
+                  Nothing -> first.body
+                _ -> ExprCase (ExprTuple paramVars) (Array.mapMaybe (clauseToTupleCase paramVars) clauses)
+          in { name
+             , parameters: paramPats
+             , body: caseExpr
+             , guards: []
+             , typeSignature: first.typeSignature
+             }
+
+    -- Convert a function clause to a case clause (single parameter case)
+    clauseToCaseClause :: Array Expr -> FunctionDeclaration -> Maybe CaseClause
+    clauseToCaseClause _ func = case Array.head func.parameters of
+      Nothing -> Nothing
+      Just pat -> Just { pattern: pat, body: func.body, guard: Nothing }
+
+    -- Convert a function clause to a case clause with tuple pattern (multi-param)
+    clauseToTupleCase :: Array Expr -> FunctionDeclaration -> Maybe CaseClause
+    clauseToTupleCase _ func =
+      let n = Array.length func.parameters
+          -- Use "Tuple" for 2 params, "Tuple3" for 3, etc. to match PureScript conventions
+          tupName = if n == 2 then "Tuple" else "Tuple" <> show n
+      in if n > 1
+         then Just { pattern: PatCon tupName func.parameters, body: func.body, guard: Nothing }
+         else clauseToCaseClause [] func

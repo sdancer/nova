@@ -19,9 +19,14 @@ data UnifyError
 
 instance showUnifyError :: Show UnifyError where
   show (OccursCheck v t) = "Occurs check: " <> v.name <> " in type"
-  show (TypeMismatch t1 t2) = "Type mismatch"
+  show (TypeMismatch t1 t2) = "Type mismatch: " <> showType t1 <> " vs " <> showType t2
   show (ArityMismatch name n1 n2) = "Arity mismatch for " <> name <> ": " <> show n1 <> " vs " <> show n2
   show (RecordFieldMismatch f) = "Record field mismatch: " <> f
+
+showType :: Type -> String
+showType (TyVar v) = v.name <> "[" <> show v.id <> "]"
+showType (TyCon tc) = tc.name <> "(" <> show (length tc.args) <> " args)"
+showType (TyRecord r) = "{record}"
 
 -- | Occurs check: does variable v occur in type t?
 occurs :: TVar -> Type -> Boolean
@@ -58,14 +63,17 @@ unifyMany ts1 ts2 = foldM step emptySubst (zip ts1 ts2)
 unifyRecords :: { fields :: Map.Map String Type, row :: _ }
              -> { fields :: Map.Map String Type, row :: _ }
              -> Either UnifyError Subst
-unifyRecords r1 r2 = do
+unifyRecords r1 r2 =
   -- Get common keys and unify their types
   let keys1 = Map.keys r1.fields
-      keys2 = Map.keys r2.fields
-  foldM unifyField emptySubst keys1
-  where
-    unifyField sub k = case Tuple (Map.lookup k r1.fields) (Map.lookup k r2.fields) of
-      Tuple (Just t1) (Just t2) -> do
-        s <- unify (applySubst sub t1) (applySubst sub t2)
-        pure (composeSubst s sub)
-      _ -> Right sub -- field not in both, handle with row polymorphism later
+  in foldM (unifyField r1.fields r2.fields) emptySubst keys1
+
+-- | Helper to unify a single field
+unifyField :: Map.Map String Type -> Map.Map String Type -> Subst -> String -> Either UnifyError Subst
+unifyField fields1 fields2 sub k =
+  case Tuple (Map.lookup k fields1) (Map.lookup k fields2) of
+    Tuple (Just t1) (Just t2) ->
+      case unify (applySubst sub t1) (applySubst sub t2) of
+        Left err -> Left err
+        Right s -> Right (composeSubst s sub)
+    _ -> Right sub -- field not in both, handle with row polymorphism later
