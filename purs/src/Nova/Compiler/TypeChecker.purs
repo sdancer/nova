@@ -472,10 +472,25 @@ inferConPats env conTy pats resultTy = go env conTy pats emptySubst
 
 -- | Infer let bindings
 inferBinds :: Env -> Array LetBind -> Either TCError PatResult
-inferBinds env binds = go env binds emptySubst
+inferBinds env binds =
+  -- First pass: add all bindings with fresh type variables (for recursive refs)
+  let envWithPlaceholders = addBindPlaceholders env binds
+  -- Second pass: infer actual types
+  in inferBindsPass2 envWithPlaceholders binds emptySubst
   where
-    go e [] sub = Right { env: e, sub }
-    go e bs sub = case Array.uncons bs of
+    addBindPlaceholders :: Env -> Array LetBind -> Env
+    addBindPlaceholders e bs = Array.foldl addOne e bs
+
+    addOne :: Env -> LetBind -> Env
+    addOne e bind = case bind.pattern of
+      PatVar name ->
+        let Tuple tv e' = freshVar e ("let_" <> name)
+        in extendEnv e' name (mkScheme [] (TyVar tv))
+      _ -> e
+
+    inferBindsPass2 :: Env -> Array LetBind -> Subst -> Either TCError PatResult
+    inferBindsPass2 e [] sub = Right { env: e, sub }
+    inferBindsPass2 e bs sub = case Array.uncons bs of
       Nothing -> Right { env: e, sub }
       Just { head: bind, tail: rest } ->
         case infer e bind.value of
@@ -488,7 +503,7 @@ inferBinds env binds = go env binds emptySubst
                     env3 = case bind.pattern of
                       PatVar name -> extendEnv patRes.env name scheme
                       _ -> patRes.env
-                in go env3 rest (composeSubst patRes.sub (composeSubst valRes.sub sub))
+                in inferBindsPass2 env3 rest (composeSubst patRes.sub (composeSubst valRes.sub sub))
 
 -- | Infer case clauses
 inferClauses :: Env -> Type -> Type -> Array CaseClause -> Subst -> Either TCError PatResult
@@ -594,7 +609,15 @@ typeExprToType varMap (TyExprVar name) =
     Just tv -> TyVar tv
     Nothing -> TyCon (mkTCon name [])  -- Assume it's a type constructor
 typeExprToType varMap (TyExprCon name) =
-  TyCon (mkTCon name [])
+  -- Handle well-known type aliases
+  case name of
+    "TCon" -> TyRecord { fields: Map.fromFoldable [Tuple "name" tString, Tuple "args" (tArray tTypeHolder)], row: Nothing }
+    "TVar" -> TyRecord { fields: Map.fromFoldable [Tuple "id" tInt, Tuple "name" tString], row: Nothing }
+    "Token" -> TyRecord { fields: Map.fromFoldable [Tuple "tokenType" (TyCon (mkTCon "TokenType" [])), Tuple "value" tString, Tuple "line" tInt, Tuple "column" tInt, Tuple "pos" tInt], row: Nothing }
+    _ -> TyCon (mkTCon name [])
+  where
+    -- Avoid circular dependency with tType
+    tTypeHolder = TyCon (mkTCon "Type" [])
 typeExprToType varMap (TyExprApp f arg) =
   case typeExprToType varMap f of
     TyCon tc -> TyCon { name: tc.name, args: Array.snoc tc.args (typeExprToType varMap arg) }
@@ -624,14 +647,68 @@ checkTypeAlias env ta =
   let scheme = mkScheme [] (TyCon (mkTCon ta.name []))
   in extendEnv env ta.name scheme
 
--- | Type check a module
+-- | Type check a module with two-pass approach for forward references
+-- Pass 1: Process data types, type aliases, and collect function signatures
+-- Pass 2: Type check function bodies
 checkModule :: Env -> Array Declaration -> Either TCError Env
-checkModule env decls = go env decls
+checkModule env decls =
+  -- Pass 1: Process non-function declarations and collect function names
+  let env1 = processNonFunctions env decls
+      -- Pass 2: Add placeholder types for all functions first
+      env2 = addFunctionPlaceholders env1 decls
+  -- Pass 3: Type check all function bodies
+  in checkFunctionBodies env2 decls
+
+-- | Process non-function declarations (data types, type aliases, imports, type sigs)
+processNonFunctions :: Env -> Array Declaration -> Env
+processNonFunctions env decls = Array.foldl processOne env decls
+  where
+    processOne e (DeclDataType dt) = checkDataType e dt
+    processOne e (DeclTypeAlias ta) = checkTypeAlias e ta
+    processOne e _ = e  -- Skip functions for now
+
+-- | Add placeholder types for all functions
+-- Uses type signature if available, otherwise creates a fresh type variable
+addFunctionPlaceholders :: Env -> Array Declaration -> Env
+addFunctionPlaceholders env decls =
+  let -- Collect standalone type signatures into a map
+      sigMap = Array.foldl collectSig Map.empty decls
+      -- Add placeholders for all functions
+  in Array.foldl (addPlaceholder sigMap) env decls
+  where
+    collectSig m (DeclTypeSig sig) = Map.insert sig.name sig.ty m
+    collectSig m _ = m
+
+    addPlaceholder sigs e (DeclFunction func) =
+      -- First check embedded type signature in the function (func.typeSignature is Maybe TypeSignature)
+      case func.typeSignature of
+        Just sig ->
+          -- sig is a TypeSignature record with { name, typeVars, constraints, ty }
+          let ty = typeExprToType Map.empty sig.ty
+              scheme = mkScheme [] ty
+          in extendEnv e func.name scheme
+        Nothing ->
+          -- Then check standalone signatures
+          case Map.lookup func.name sigs of
+            Just tyExpr ->
+              let ty = typeExprToType Map.empty tyExpr
+                  scheme = mkScheme [] ty
+              in extendEnv e func.name scheme
+            Nothing ->
+              -- No signature, add fresh type variable
+              let Tuple tv e' = freshVar e ("fn_" <> func.name)
+              in extendEnv e' func.name (mkScheme [] (TyVar tv))
+    addPlaceholder _ e _ = e
+
+-- | Type check all function bodies
+checkFunctionBodies :: Env -> Array Declaration -> Either TCError Env
+checkFunctionBodies env decls = go env decls
   where
     go e [] = Right e
     go e ds = case Array.uncons ds of
       Nothing -> Right e
-      Just { head: d, tail: rest } ->
-        case checkDecl e d of
+      Just { head: DeclFunction func, tail: rest } ->
+        case checkFunction e func of
           Left err -> Left err
-          Right e' -> go e' rest
+          Right r -> go r.env rest
+      Just { head: _, tail: rest } -> go e rest
