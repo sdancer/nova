@@ -238,6 +238,13 @@ builtinPrelude = Map.fromFoldable
   , Tuple "charLte" (mkScheme [] (tArrow tChar (tArrow tChar tBool)))
   , Tuple "charGte" (mkScheme [] (tArrow tChar (tArrow tChar tBool)))
   , Tuple "charEq" (mkScheme [] (tArrow tChar (tArrow tChar tBool)))
+  -- Character classification functions
+  , Tuple "isAlpha" (mkScheme [] (tArrow tChar tBool))
+  , Tuple "isDigit" (mkScheme [] (tArrow tChar tBool))
+  , Tuple "isAlphaNum" (mkScheme [] (tArrow tChar tBool))
+  , Tuple "isSpace" (mkScheme [] (tArrow tChar tBool))
+  , Tuple "isUpper" (mkScheme [] (tArrow tChar tBool))
+  , Tuple "isLower" (mkScheme [] (tArrow tChar tBool))
 
   -- String.CodeUnits functions (CU alias)
   , Tuple "CU.charAt" (mkScheme [] (tArrow tInt (tArrow tString (tMaybe tChar))))
@@ -300,9 +307,9 @@ builtinPrelude = Map.fromFoldable
   , Tuple "Set.toUnfoldable" (mkScheme [a] (tArrow (tSet (TyVar a)) (tArray (TyVar a))))
 
   -- Foldable functions
-  , Tuple "foldl" (mkScheme [a, b] (tArrow (tArrow (TyVar b) (tArrow (TyVar a) (TyVar b))) (tArrow (TyVar b) (tArrow (tArray (TyVar a)) (TyVar b)))))
-  , Tuple "foldr" (mkScheme [a, b] (tArrow (tArrow (TyVar a) (tArrow (TyVar b) (TyVar b))) (tArrow (TyVar b) (tArrow (tArray (TyVar a)) (TyVar b)))))
-  , Tuple "foldM" (mkScheme [a, b] (tArrow (tArrow (TyVar b) (tArrow (TyVar a) (TyVar b))) (tArrow (TyVar b) (tArrow (tArray (TyVar a)) (TyVar b))))) -- simplified
+  , Tuple "foldl" (mkScheme [a, b, c] (tArrow (tArrow (TyVar b) (tArrow (TyVar a) (TyVar b))) (tArrow (TyVar b) (tArrow (TyVar c) (TyVar b))))) -- generic Foldable
+  , Tuple "foldr" (mkScheme [a, b, c] (tArrow (tArrow (TyVar a) (tArrow (TyVar b) (TyVar b))) (tArrow (TyVar b) (tArrow (TyVar c) (TyVar b))))) -- generic Foldable
+  , Tuple "foldM" (mkScheme [a, b, c] (tArrow (tArrow (TyVar b) (tArrow (TyVar a) (TyVar b))) (tArrow (TyVar b) (tArrow (TyVar c) (TyVar b))))) -- generic FoldableM
 
   -- Tuple functions
   , Tuple "Tuple" (mkScheme [a, b] (tArrow (TyVar a) (tArrow (TyVar b) (tTuple [TyVar a, TyVar b]))))
@@ -350,6 +357,8 @@ builtinPrelude = Map.fromFoldable
   , Tuple "mkTCon" (mkScheme [] (tArrow tString (tArrow (tArray tType) tTCon)))
   , Tuple "mkTCon0" (mkScheme [] (tArrow tString tTCon))
   , Tuple "generalize" (mkScheme [] (tArrow tEnv (tArrow tType tScheme)))
+  , Tuple "builtinPrelude" (mkScheme [] (tMap tString tScheme))
+  , Tuple "singleSubst" (mkScheme [] (tArrow tTVar (tArrow tType tSubst)))
   -- Type helper functions (returns Type)
   , Tuple "tInt" (mkScheme [] tType)
   , Tuple "tString" (mkScheme [] tType)
@@ -384,6 +393,8 @@ builtinPrelude = Map.fromFoldable
 
   -- Sentinel for guarded functions
   , Tuple "__guarded__" (mkScheme [a] (TyVar a))
+  -- Underscore accessor pattern (_.field is really a record with that field)
+  , Tuple "_" (mkScheme [a] (TyVar a))
 
   -- Expression constructors (from Ast)
   , Tuple "ExprVar" (mkScheme [] (tArrow tString tExpr))
