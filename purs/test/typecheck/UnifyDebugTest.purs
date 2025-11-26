@@ -257,6 +257,366 @@ testFn r1 = helper 0 "x"
       Nothing -> Right sub
 """
 
+  -- Test 5i: Simpler - without wildcard row
+  log "  Test 5i (without wildcard row):"
+  testCode """
+module Test where
+import Data.Either (Either(..))
+import Data.Map as Map
+import Data.Maybe (Maybe(..))
+
+testFn :: { fields :: Map.Map String Int } -> Either String Int
+testFn r1 = helper 0 "x"
+  where
+    helper sub k = case Map.lookup k r1.fields of
+      Just t1 -> Right t1
+      Nothing -> Right sub
+"""
+
+  -- Test 5j: Simpler - just record access in where
+  log "  Test 5j (record access in where):"
+  testCode """
+module Test where
+
+testFn :: { x :: Int } -> Int
+testFn r = helper 0
+  where
+    helper n = r.x + n
+"""
+
+  -- Test 5k: With wildcard row
+  log "  Test 5k (record with wildcard in where):"
+  testCode """
+module Test where
+
+testFn :: { x :: Int, row :: _ } -> Int
+testFn r = helper 0
+  where
+    helper n = r.x + n
+"""
+
+  -- Test 5l: Map.lookup without where
+  log "  Test 5l (Map.lookup without where):"
+  testCode """
+module Test where
+import Data.Map as Map
+import Data.Maybe (Maybe(..))
+
+testFn :: { fields :: Map.Map String Int } -> Int
+testFn r1 = case Map.lookup "x" r1.fields of
+  Just n -> n
+  Nothing -> 0
+"""
+
+  -- Test 5m: Map.lookup in where but no closure
+  log "  Test 5m (Map.lookup in where, no closure):"
+  testCode """
+module Test where
+import Data.Map as Map
+import Data.Maybe (Maybe(..))
+
+testFn :: Map.Map String Int -> Int
+testFn m = helper "x"
+  where
+    helper k = case Map.lookup k m of
+      Just n -> n
+      Nothing -> 0
+"""
+
+  -- Test 5n: Record field in where with Map.lookup
+  log "  Test 5n (record.field in where with Map.lookup):"
+  testCode """
+module Test where
+import Data.Map as Map
+import Data.Maybe (Maybe(..))
+
+testFn :: { fields :: Map.Map String Int } -> Int
+testFn r1 = helper "x"
+  where
+    helper k = case Map.lookup k r1.fields of
+      Just n -> n
+      Nothing -> 0
+"""
+
+  -- Test 5o: Two params in where helper
+  log "  Test 5o (two params in where helper):"
+  testCode """
+module Test where
+import Data.Map as Map
+import Data.Maybe (Maybe(..))
+
+testFn :: { fields :: Map.Map String Int } -> Int
+testFn r1 = helper 0 "x"
+  where
+    helper sub k = case Map.lookup k r1.fields of
+      Just n -> n
+      Nothing -> sub
+"""
+
+  -- Test 5p: Two params but simpler body
+  log "  Test 5p (two params, simple body):"
+  testCode """
+module Test where
+import Data.Map as Map
+
+testFn :: { fields :: Map.Map String Int } -> Int
+testFn r1 = helper 0 "x"
+  where
+    helper sub k = sub
+"""
+
+  -- Test 5q: Two params with record access
+  log "  Test 5q (two params, record access):"
+  testCode """
+module Test where
+
+testFn :: { x :: Int } -> Int
+testFn r1 = helper 0 "x"
+  where
+    helper sub k = r1.x + sub
+"""
+
+  -- Test 5r: With Either return
+  log "  Test 5r (with Either return):"
+  testCode """
+module Test where
+import Data.Either (Either(..))
+import Data.Map as Map
+import Data.Maybe (Maybe(..))
+
+testFn :: { fields :: Map.Map String Int } -> Either String Int
+testFn r1 = helper 0 "x"
+  where
+    helper sub k = case Map.lookup k r1.fields of
+      Just n -> Right n
+      Nothing -> Right sub
+"""
+
+  -- Test 5s: With Either AND wildcard row
+  log "  Test 5s (Either + wildcard row):"
+  testCode """
+module Test where
+import Data.Either (Either(..))
+import Data.Map as Map
+import Data.Maybe (Maybe(..))
+
+testFn :: { fields :: Map.Map String Int, row :: _ } -> Either String Int
+testFn r1 = helper 0 "x"
+  where
+    helper sub k = case Map.lookup k r1.fields of
+      Just n -> Right n
+      Nothing -> Right sub
+"""
+
+  -- Test 5t: Either without case
+  log "  Test 5t (Either without case):"
+  testCode """
+module Test where
+import Data.Either (Either(..))
+import Data.Map as Map
+
+testFn :: { fields :: Map.Map String Int } -> Either String Int
+testFn r1 = helper 0 "x"
+  where
+    helper sub k = Right sub
+"""
+
+  -- Test 5u: Either with simple closure
+  log "  Test 5u (Either with simple closure):"
+  testCode """
+module Test where
+import Data.Either (Either(..))
+
+testFn :: { x :: Int } -> Either String Int
+testFn r1 = helper 0
+  where
+    helper sub = Right (r1.x + sub)
+"""
+
+  -- Test 5v: Case + Right without record access
+  log "  Test 5v (case+Right without record):"
+  testCode """
+module Test where
+import Data.Either (Either(..))
+import Data.Maybe (Maybe(..))
+
+testFn :: Int -> Either String Int
+testFn x = helper 0
+  where
+    helper sub = case Just x of
+      Just n -> Right n
+      Nothing -> Right sub
+"""
+
+  -- Test 5w: Case + Right WITH record access
+  log "  Test 5w (case+Right WITH record access):"
+  testCode """
+module Test where
+import Data.Either (Either(..))
+import Data.Maybe (Maybe(..))
+
+testFn :: { x :: Int } -> Either String Int
+testFn r1 = helper 0
+  where
+    helper sub = case Just r1.x of
+      Just n -> Right n
+      Nothing -> Right sub
+"""
+
+  -- Test 5x: Map.lookup + Right in where
+  log "  Test 5x (Map.lookup+Right in where):"
+  testCode """
+module Test where
+import Data.Either (Either(..))
+import Data.Map as Map
+import Data.Maybe (Maybe(..))
+
+testFn :: Map.Map String Int -> Either String Int
+testFn m = helper 0 "x"
+  where
+    helper sub k = case Map.lookup k m of
+      Just n -> Right n
+      Nothing -> Right sub
+"""
+
+  -- Test 5y: Same but with record.fields
+  log "  Test 5y (Map.lookup on record.fields):"
+  testCode """
+module Test where
+import Data.Either (Either(..))
+import Data.Map as Map
+import Data.Maybe (Maybe(..))
+
+testFn :: { fields :: Map.Map String Int } -> Either String Int
+testFn r = helper 0 "x"
+  where
+    helper sub k = case Map.lookup k r.fields of
+      Just n -> Right n
+      Nothing -> Right sub
+"""
+
+  -- Test 5z: Map.lookup + Right WITHOUT where
+  log "  Test 5z (Map.lookup+Right, no where):"
+  testCode """
+module Test where
+import Data.Either (Either(..))
+import Data.Map as Map
+import Data.Maybe (Maybe(..))
+
+testFn :: Map.Map String Int -> Int -> Either String Int
+testFn m sub = case Map.lookup "x" m of
+  Just n -> Right n
+  Nothing -> Right sub
+"""
+
+  -- Test 6a: Map.lookup in where, returns Int (not Either)
+  log "  Test 6a (Map.lookup in where, returns Int):"
+  testCode """
+module Test where
+import Data.Map as Map
+import Data.Maybe (Maybe(..))
+
+testFn :: Map.Map String Int -> Int
+testFn m = helper 0 "x"
+  where
+    helper sub k = case Map.lookup k m of
+      Just n -> n
+      Nothing -> sub
+"""
+
+  -- Test 6b: Just case on Maybe without Map.lookup
+  log "  Test 6b (Just case without Map.lookup):"
+  testCode """
+module Test where
+import Data.Either (Either(..))
+import Data.Maybe (Maybe(..))
+
+testFn :: Maybe Int -> Either String Int
+testFn mx = helper 0
+  where
+    helper sub = case mx of
+      Just n -> Right n
+      Nothing -> Right sub
+"""
+
+  -- Test 6c: Same pattern with explicit type
+  log "  Test 6c (same with explicit type annotation):"
+  testCode """
+module Test where
+import Data.Either (Either(..))
+import Data.Map as Map
+import Data.Maybe (Maybe(..))
+
+testFn :: Map.Map String Int -> Either String Int
+testFn m = helper 0 "x"
+  where
+    helper :: Int -> String -> Either String Int
+    helper sub k = case Map.lookup k m of
+      Just n -> Right n
+      Nothing -> Right sub
+"""
+
+  -- Test 6d: Simplified - remove closure, pass m as arg
+  log "  Test 6d (no closure, pass m):"
+  testCode """
+module Test where
+import Data.Either (Either(..))
+import Data.Map as Map
+import Data.Maybe (Maybe(..))
+
+testFn :: Map.Map String Int -> Either String Int
+testFn m = helper m 0 "x"
+  where
+    helper theMap sub k = case Map.lookup k theMap of
+      Just n -> Right n
+      Nothing -> Right sub
+"""
+
+  -- Test 6e: Using let instead of where
+  log "  Test 6e (let instead of where):"
+  testCode """
+module Test where
+import Data.Either (Either(..))
+import Data.Map as Map
+import Data.Maybe (Maybe(..))
+
+testFn :: Map.Map String Int -> Either String Int
+testFn m =
+  let helper sub k = case Map.lookup k m of
+        Just n -> Right n
+        Nothing -> Right sub
+  in helper 0 "x"
+"""
+
+  -- Test 6f: Top level function (not nested)
+  log "  Test 6f (top level, not nested):"
+  testCode """
+module Test where
+import Data.Either (Either(..))
+import Data.Map as Map
+import Data.Maybe (Maybe(..))
+
+helper :: Map.Map String Int -> Int -> String -> Either String Int
+helper m sub k = case Map.lookup k m of
+  Just n -> Right n
+  Nothing -> Right sub
+
+testFn :: Map.Map String Int -> Either String Int
+testFn m = helper m 0 "x"
+"""
+
+  -- Test 6g: Without case, use maybe
+  log "  Test 6g (using maybe instead of case):"
+  testCode """
+module Test where
+import Data.Either (Either(..))
+import Data.Map as Map
+import Data.Maybe (maybe)
+
+testFn :: Map.Map String Int -> Either String Int
+testFn m = maybe (Right 0) Right (Map.lookup "x" m)
+"""
+
 testCode :: String -> Effect Unit
 testCode src = do
   let tokens = tokenize src
