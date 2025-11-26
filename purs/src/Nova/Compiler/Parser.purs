@@ -994,14 +994,13 @@ parseCaseClausesAt tokens indent acc =
                   Tuple body remaining <- parseExpression bodyTokens
                   let clause = { pattern: pat, guard: Just guard, body: body }
                   let newAcc = Array.snoc clauseAcc clause
-                  -- Check for more guards
-                  let rest' = skipNewlines remaining
-                  case rest' of
-                    [] -> parseCaseClausesAt rest clauseIndent newAcc
-                    _ -> case Array.head rest' of
-                      Just t' | t'.tokenType == TokOperator, t'.value == "|" ->
-                        parseAdditionalGuard rest' pat clauseIndent newAcc
-                      _ -> parseCaseClausesAt (dropNewlines rest) clauseIndent newAcc
+                  -- Check for more guards in `rest` (from takeBody), not `remaining` (from parseExpression)
+                  -- The additional guards are in `rest`, since bodyTokens only contains the body expression
+                  let restAfterBody = skipNewlines rest
+                  case Array.head restAfterBody of
+                    Just t' | t'.tokenType == TokOperator, t'.value == "|" ->
+                      parseAdditionalGuard restAfterBody pat clauseIndent newAcc
+                    _ -> parseCaseClausesAt rest clauseIndent newAcc
                 Nothing -> failure "Expected body after ->"
             Left err -> Left err
         _ -> parseCaseClausesAt toks clauseIndent clauseAcc
@@ -1017,13 +1016,17 @@ parseCaseClause tokens = do
       Tuple pat rest <- parsePattern tokens'
       let Tuple guard rest' = maybeParseGuard rest
       Tuple _ rest'' <- expectOperator rest' "->"
+      -- Use the pattern column for takeBody
+      -- This allows nested case expressions to have clauses at lower indentation than the body
+      -- Additional guards are detected by checking if remaining tokens after parseExpression start with |
       let Tuple bodyTokens rest''' = takeBody rest'' [] firstTok.column
       Tuple body remaining <- parseExpression bodyTokens
       case skipNewlines remaining of
         [] -> success { pattern: pat, guard: guard, body: body } (dropNewlines rest''')
         -- Check if remaining tokens are additional guards for the same pattern
         _ -> case hasMoreGuards remaining of
-          true -> success { pattern: pat, guard: guard, body: body } remaining
+          -- Concatenate remaining guards with rest''' (tokens after the body)
+          true -> success { pattern: pat, guard: guard, body: body } (remaining <> rest''')
           false -> failure "Unexpected tokens after case-clause body"
   where
     -- Check if remaining tokens look like another guard (| guard -> ...)
@@ -1110,20 +1113,61 @@ takeBody tokens acc indent =
       case Array.head rest of
         Just t' | t'.column < indent -> Tuple (Array.reverse acc) rest
         Just t' | t'.column == indent, clauseStart rest -> Tuple (Array.reverse acc) rest
+        -- Check for additional guard (| guard -> ...) - stop before it
+        Just t' | t'.tokenType == TokOperator, t'.value == "|", guardStart rest ->
+          Tuple (Array.reverse acc) rest
         -- Continue collecting body tokens on next line (indented continuation)
         -- Include a newline token so nested case expressions can parse correctly
         _ -> takeBody rest (Array.cons t acc) indent
     Just t -> takeBody (Array.drop 1 tokens) (Array.cons t acc) indent
 
+-- | Check if tokens start with a guard: | expr ->
+guardStart :: Array Token -> Boolean
+guardStart tokens =
+  case Array.head tokens of
+    Just t | t.tokenType == TokOperator, t.value == "|" ->
+      case parseGuardExpression (Array.drop 1 tokens) of
+        Right (Tuple _ rest) ->
+          case expectOperator rest "->" of
+            Right _ -> true
+            Left _ -> false
+        Left _ -> false
+    _ -> false
+
 clauseStart :: Array Token -> Boolean
 clauseStart tokens =
   case parsePattern tokens of
     Right (Tuple _ rest) ->
-      let Tuple _ rest' = maybeParseGuard rest in
-      case expectOperator rest' "->" of
-        Right _ -> true
-        Left _ -> false
+      case Array.head tokens of
+        Just patTok ->
+          -- Check for guard with indentation check
+          let Tuple _ rest' = maybeParseGuardIndented patTok.column rest in
+          case expectOperator rest' "->" of
+            Right _ -> true
+            Left _ -> false
+        Nothing -> false
     Left _ -> false
+  where
+    -- Parse guard, but if we need to skip newlines, only accept guards that are
+    -- MORE indented than the pattern (indicating continuation, not a new body line)
+    maybeParseGuardIndented :: Int -> Array Token -> Tuple (Maybe Ast.Expr) (Array Token)
+    maybeParseGuardIndented patCol toks =
+      case Array.head toks of
+        -- Guard on same line (no newline)
+        Just t | t.tokenType == TokOperator, t.value == "|" ->
+          case parseGuardExpression (Array.drop 1 toks) of
+            Right (Tuple guard rest) -> Tuple (Just guard) rest
+            Left _ -> Tuple Nothing toks
+        -- Newline - check if next line has a guard that's MORE indented
+        Just t | t.tokenType == TokNewline ->
+          let toks' = skipNewlines toks in
+          case Array.head toks' of
+            Just t' | t'.tokenType == TokOperator, t'.value == "|", t'.column > patCol ->
+              case parseGuardExpression (Array.drop 1 toks') of
+                Right (Tuple guard rest) -> Tuple (Just guard) rest
+                Left _ -> Tuple Nothing toks
+            _ -> Tuple Nothing toks
+        _ -> Tuple Nothing toks
 
 -- ------------------------------------------------------------
 -- Do block
