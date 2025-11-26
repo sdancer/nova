@@ -1,6 +1,7 @@
 module Nova.Compiler.Parser where
 
 import Prelude
+import Data.Array ((:))
 import Data.Array as Array
 import Data.Maybe (Maybe(..))
 import Data.Either (Either(..))
@@ -849,10 +850,50 @@ parseLetExpression tokens = do
 parseBinding :: Array Token -> ParseResult Ast.LetBind
 parseBinding tokens = do
   let tokens' = skipNewlines tokens
-  Tuple pat rest <- parsePattern tokens'
-  Tuple _ rest' <- expectOperator rest "="
-  Tuple expr rest'' <- parseExpression rest'
-  success { pattern: pat, value: expr, typeAnn: Nothing } rest''
+  -- First try function-style binding: name params = expr
+  case parseFunctionStyleBinding tokens' of
+    Right r -> Right r
+    Left _ -> do
+      -- Fall back to simple pattern binding: pat = expr
+      Tuple pat rest <- parsePattern tokens'
+      Tuple _ rest' <- expectOperator rest "="
+      Tuple expr rest'' <- parseExpression rest'
+      success { pattern: pat, value: expr, typeAnn: Nothing } rest''
+
+-- | Parse function-style let binding: name param1 param2 = body
+parseFunctionStyleBinding :: Array Token -> ParseResult Ast.LetBind
+parseFunctionStyleBinding tokens =
+  -- Must start with an identifier (function name)
+  case Array.head tokens of
+    Just t | t.tokenType == TokIdentifier ->
+      let name = t.value
+          rest = Array.drop 1 tokens
+          Tuple params rest' = collectParams rest []
+      in -- If we found at least one parameter, it's a function binding
+          case Array.length params of
+            0 -> failure "Not a function binding"
+            _ -> case expectOperator rest' "=" of
+              Left err -> Left err
+              Right (Tuple _ rest'') -> case parseExpression rest'' of
+                Left err -> Left err
+                Right (Tuple body rest''') ->
+                  -- Convert to: name = \params -> body
+                  let lambda = Ast.ExprLambda params body
+                  in success { pattern: Ast.PatVar name, value: lambda, typeAnn: Nothing } rest'''
+    _ -> failure "Not a function binding"
+  where
+    -- Collect parameters until we hit = sign (returns params in order and remaining tokens)
+    collectParams :: Array Token -> Array Ast.Pattern -> Tuple (Array Ast.Pattern) (Array Token)
+    collectParams toks acc =
+      let toks' = skipNewlines toks
+      in case Array.head toks' of
+        -- Stop at = sign
+        Just tok | tok.tokenType == TokOperator, tok.value == "=" ->
+          Tuple (Array.reverse acc) toks'
+        -- Try to parse a simple pattern (var, wildcard, literal, or parens)
+        _ -> case parseSimplePattern toks' of
+          Right (Tuple pat rest) -> collectParams rest (pat : acc)
+          Left _ -> Tuple (Array.reverse acc) toks'
 
 -- ------------------------------------------------------------
 -- If expression
@@ -1219,13 +1260,26 @@ parseParenImportList tokens =
     _ -> failure "No paren import list"
 
 parseImportItem :: Array Token -> ParseResult Ast.ImportItem
-parseImportItem tokens = do
-  Tuple name rest <- parseIdentifierName tokens
-  case Array.head rest of
-    Just t | t.tokenType == TokDelimiter, t.value == "(" -> do
-      Tuple spec rest' <- parseImportSpec (Array.drop 1 rest)
-      success (Ast.ImportType name spec) rest'
-    _ -> success (Ast.ImportValue name) rest
+parseImportItem tokens =
+  -- Try parsing an operator in parens like (:) or (<>)
+  case Array.head tokens of
+    Just t | t.tokenType == TokDelimiter, t.value == "(" ->
+      case Array.head (Array.drop 1 tokens) of
+        Just opTok | opTok.tokenType == TokOperator ->
+          case Array.head (Array.drop 2 tokens) of
+            Just closeTok | closeTok.tokenType == TokDelimiter, closeTok.value == ")" ->
+              success (Ast.ImportValue ("(" <> opTok.value <> ")")) (Array.drop 3 tokens)
+            _ -> parseNormalImportItem tokens
+        _ -> parseNormalImportItem tokens
+    _ -> parseNormalImportItem tokens
+  where
+    parseNormalImportItem toks = do
+      Tuple name rest <- parseIdentifierName toks
+      case Array.head rest of
+        Just t | t.tokenType == TokDelimiter, t.value == "(" -> do
+          Tuple spec rest' <- parseImportSpec (Array.drop 1 rest)
+          success (Ast.ImportType name spec) rest'
+        _ -> success (Ast.ImportValue name) rest
 
 parseImportSpec :: Array Token -> ParseResult Ast.ImportSpec
 parseImportSpec tokens =

@@ -142,8 +142,8 @@ genExpr' ctx indent (ExprLambda pats body) =
 
 genExpr' ctx indent (ExprLet binds body) =
   let ctxWithBinds = foldr (\b c -> addLocalsFromPattern b.pattern c) ctx binds
-      bindCode = intercalate "\n" (map (genLetBindCtx ctx indent) binds)
-  in bindCode <> "\n" <> genExprCtx ctxWithBinds indent body
+      bindCode = intercalate "\n" (map (genLetBindCtx ctx (indent + 1)) binds)
+  in "\n" <> bindCode <> "\n" <> ind (indent + 1) <> genExpr' ctxWithBinds 0 body
 
 genExpr' ctx indent (ExprIf cond then_ else_) =
   "if " <> genExpr' ctx indent cond <> " do\n" <>
@@ -321,7 +321,9 @@ genUnaryOp op = op
 
 -- | Convert camelCase to snake_case
 snakeCase :: String -> String
-snakeCase s = go (String.toCodePointArray s) false ""
+snakeCase s =
+  let result = go (String.toCodePointArray s) false ""
+  in escapeReserved result
   where
     go [] _ acc = acc
     go cps prevLower acc = case Array.uncons cps of
@@ -332,6 +334,21 @@ snakeCase s = go (String.toCodePointArray s) false ""
             lower = String.toLower cpStr
             prefix = if isUpper && prevLower then "_" else ""
         in go rest (not isUpper) (acc <> prefix <> lower)
+
+-- | Escape Elixir reserved words by appending underscore
+escapeReserved :: String -> String
+escapeReserved s = if isReserved s then s <> "_" else s
+  where
+    isReserved word = Array.elem word elixirReserved
+    elixirReserved =
+      [ "nil", "true", "false", "do", "end", "if", "else", "unless"
+      , "case", "cond", "when", "and", "or", "not", "in", "fn"
+      , "def", "defp", "defmodule", "defstruct", "defmacro", "defimpl"
+      , "defprotocol", "defexception", "defdelegate", "defguard"
+      , "import", "require", "use", "alias", "for", "with", "quote"
+      , "unquote", "receive", "try", "catch", "rescue", "after", "raise"
+      , "throw", "exit", "super", "spawn", "send", "self"
+      ]
 
 -- | Indentation helper
 ind :: Int -> String
