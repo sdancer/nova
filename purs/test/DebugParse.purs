@@ -35,9 +35,40 @@ main = do
   log ""
 
   log "--- Types.purs ---"
-  content <- readTextFile UTF8 "src/Nova/Compiler/Types.purs"
-  let tokens = tokenize content
-  parseAllDecls tokens 1
+  typesContent <- readTextFile UTF8 "src/Nova/Compiler/Types.purs"
+  parseFile "Types.purs" (tokenize typesContent)
+
+  log "\n--- Ast.purs ---"
+  astContent <- readTextFile UTF8 "src/Nova/Compiler/Ast.purs"
+  parseFile "Ast.purs" (tokenize astContent)
+
+  log "\n--- Tokenizer.purs ---"
+  tokContent <- readTextFile UTF8 "src/Nova/Compiler/Tokenizer.purs"
+  parseFile "Tokenizer.purs" (tokenize tokContent)
+
+  log "\n--- Parser.purs ---"
+  parserContent <- readTextFile UTF8 "src/Nova/Compiler/Parser.purs"
+  parseFile "Parser.purs" (tokenize parserContent)
+
+parseFile :: String -> Array Token -> Effect Unit
+parseFile name tokens = do
+  let result = parseAllDeclsQuiet tokens 0
+  case result of
+    Right count -> log $ "  ✓ " <> name <> ": " <> show count <> " declarations parsed"
+    Left { count, err, tokens: toks } -> do
+      log $ "  ✗ " <> name <> ": Failed at declaration " <> show (count + 1)
+      log $ "    Error: " <> err
+      let relevant = Array.take 15 $ Array.filter (\t -> t.tokenType /= TokNewline) toks
+      log $ "    At: " <> show (map _.value relevant)
+
+parseAllDeclsQuiet :: Array Token -> Int -> Either { count :: Int, err :: String, tokens :: Array Token } Int
+parseAllDeclsQuiet tokens count = do
+  let tokens' = P.skipNewlines tokens
+  case Array.head tokens' of
+    Nothing -> Right count
+    _ -> case P.parseDeclaration tokens' of
+      Right (Tuple _ rest) -> parseAllDeclsQuiet rest (count + 1)
+      Left err -> Left { count, err, tokens: tokens' }
 
 parseAllDecls :: Array Token -> Int -> Effect Unit
 parseAllDecls tokens n = do

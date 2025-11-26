@@ -1,4 +1,4 @@
-module Test.ImportTest where
+module Test.TestLetTokens where
 
 import Prelude
 import Effect (Effect)
@@ -11,26 +11,34 @@ import Nova.Compiler.Parser as P
 
 main :: Effect Unit
 main = do
-  log "=== Qualified Type Debug ==="
+  log "=== Let Tokens Test ==="
   
-  let input = """foo :: ParseResult Ast.Expr
-foo = unit"""
-  log $ "Input:"
-  log input
-  log ""
+  -- Test: Simple then record
+  let input = """let a = x
+      { b: c } = x
+  in c"""
+  
   let tokens = tokenize input
   log $ "Tokens: " <> show (map showTok tokens)
   
   log ""
-  log "Parsing type:"
-  case P.parseType (Array.drop 2 tokens) of  -- Skip "foo ::"
-    Right (Tuple _ rest) -> do
-      log "✓ Parsed"
-      log $ "Rest: " <> show (map showTok (Array.take 10 rest))
-    Left err -> log $ "✗ Error: " <> err
+  log "parseLetExpression:"
+  case P.parseExpression tokens of
+    Right (Tuple expr rest) -> do
+      log "✓ parsed"
+      log $ "Rest: " <> show (map showTok (Array.take 5 rest))
+    Left err -> log $ "✗ " <> err
+  
+  log ""
+  log "parseBinding on 'a = x':"
+  let bindTokens = tokenize "a = x"
+  case P.parsePattern bindTokens of
+    Right (Tuple pat rest) -> do
+      log $ "Pattern parsed, rest: " <> show (map showTok rest)
+    Left err -> log $ "Pattern failed: " <> err
 
 showTok :: Token -> String
-showTok t = t.value <> "@" <> show t.column <> ":" <> showTokType t.tokenType
+showTok t = t.value <> ":" <> showTokType t.tokenType
 
 showTokType :: TokenType -> String
 showTokType TokKeyword = "K"
@@ -42,3 +50,4 @@ showTokType TokNumber = "N"
 showTokType TokString = "S"
 showTokType TokChar = "C"
 showTokType TokUnrecognized = "?"
+

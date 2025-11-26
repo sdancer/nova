@@ -41,6 +41,7 @@ keywords =
   [ "foreign", "module", "where", "import", "data", "type"
   , "class", "instance", "let", "in", "if", "then", "else"
   , "case", "of", "do", "derive", "newtype", "infixl", "infixr", "infix"
+  , "forall"
   ]
 
 -- | Multi-character operators (longer ones first for matching)

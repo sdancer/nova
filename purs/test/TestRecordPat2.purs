@@ -1,4 +1,4 @@
-module Test.ImportTest where
+module Test.TestRecordPat2 where
 
 import Prelude
 import Effect (Effect)
@@ -11,26 +11,24 @@ import Nova.Compiler.Parser as P
 
 main :: Effect Unit
 main = do
-  log "=== Qualified Type Debug ==="
+  log "=== Record Pattern Test 2 ==="
   
-  let input = """foo :: ParseResult Ast.Expr
-foo = unit"""
-  log $ "Input:"
-  log input
-  log ""
+  -- Test just the pattern
+  let input = "Just { head, tail }"
+  
   let tokens = tokenize input
   log $ "Tokens: " <> show (map showTok tokens)
   
-  log ""
-  log "Parsing type:"
-  case P.parseType (Array.drop 2 tokens) of  -- Skip "foo ::"
-    Right (Tuple _ rest) -> do
-      log "✓ Parsed"
-      log $ "Rest: " <> show (map showTok (Array.take 10 rest))
-    Left err -> log $ "✗ Error: " <> err
+  log "parsePattern:"
+  case P.parsePattern tokens of
+    Right (Tuple pat rest) -> do
+      log "✓ Success"
+      let rest' = P.skipNewlines rest
+      log $ "Rest: " <> show (map showTok (Array.take 10 rest'))
+    Left err -> log $ "✗ " <> err
 
 showTok :: Token -> String
-showTok t = t.value <> "@" <> show t.column <> ":" <> showTokType t.tokenType
+showTok t = t.value <> "@L" <> show t.line <> "C" <> show t.column <> ":" <> showTokType t.tokenType
 
 showTokType :: TokenType -> String
 showTokType TokKeyword = "K"
