@@ -10,7 +10,7 @@ import Data.String.CodeUnits as SCU
 import Data.Set (Set)
 import Data.Set as Set
 import Data.Foldable (foldr)
-import Nova.Compiler.Ast (Module, Declaration(..), FunctionDeclaration, DataType, DataConstructor, TypeAlias, Expr(..), Pattern(..), Literal(..), LetBind, CaseClause, DoStatement(..), TypeExpr(..))
+import Nova.Compiler.Ast (Module, Declaration(..), FunctionDeclaration, GuardedExpr, GuardClause(..), DataType, DataConstructor, TypeAlias, Expr(..), Pattern(..), Literal(..), LetBind, CaseClause, DoStatement(..), TypeExpr(..))
 
 -- | Code generation context
 type GenCtx =
@@ -69,10 +69,43 @@ genFunction ctx func =
   let -- Add parameters to locals
       ctxWithParams = foldr addLocalsFromPattern ctx func.parameters
       params = intercalate ", " (map genPattern func.parameters)
-      body = genExprCtx ctxWithParams 2 func.body
-  in "  def " <> snakeCase func.name <> "(" <> params <> ") do\n" <>
-     body <> "\n" <>
-     "  end"
+  in if Array.null func.guards
+     then
+       let body = genExprCtx ctxWithParams 2 func.body
+       in "  def " <> snakeCase func.name <> "(" <> params <> ") do\n" <>
+          body <> "\n" <>
+          "  end"
+     else
+       -- Generate guarded function using cond expression
+       let guardClauses = map (genGuardedExpr ctxWithParams 4) func.guards
+           condExpr = "    cond do\n" <> intercalate "\n" guardClauses <> "\n    end"
+       in "  def " <> snakeCase func.name <> "(" <> params <> ") do\n" <>
+          condExpr <> "\n" <>
+          "  end"
+
+-- | Generate a guarded expression clause for cond
+genGuardedExpr :: GenCtx -> Int -> GuardedExpr -> String
+genGuardedExpr ctx indent ge =
+  let guardExpr = genGuardClauses ctx ge.guards
+      bodyExpr = genExprCtx ctx (indent + 2) ge.body
+      indentStr = repeatStr indent " "
+  in indentStr <> guardExpr <> " ->\n" <> bodyExpr
+
+-- | Generate guard clauses combined with &&
+genGuardClauses :: GenCtx -> Array GuardClause -> String
+genGuardClauses ctx clauses =
+  intercalate " && " (map (genGuardClause ctx) clauses)
+
+-- | Generate a single guard clause
+genGuardClause :: GenCtx -> GuardClause -> String
+genGuardClause ctx (GuardExpr expr) = genExprCtx ctx 0 expr
+genGuardClause ctx (GuardPat pat expr) =
+  -- Pattern guard: `Pat <- expr` becomes a match expression
+  "match?(" <> genPattern pat <> ", " <> genExprCtx ctx 0 expr <> ")"
+
+-- | Repeat a string n times
+repeatStr :: Int -> String -> String
+repeatStr n s = if n <= 0 then "" else s <> repeatStr (n - 1) s
 
 -- | Generate pattern code
 genPattern :: Pattern -> String

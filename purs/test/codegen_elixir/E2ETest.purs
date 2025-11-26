@@ -24,12 +24,14 @@ main = do
             { name: "add"
             , parameters: [PatVar "x", PatVar "y"]
             , body: ExprBinOp "+" (ExprVar "x") (ExprVar "y")
+            , guards: []
             , typeSignature: Nothing
             }
         , DeclFunction
             { name: "main"
             , parameters: []
             , body: ExprApp (ExprApp (ExprVar "add") (ExprLit (LitInt 2))) (ExprLit (LitInt 3))
+            , guards: []
             , typeSignature: Nothing
             }
         ]
@@ -45,12 +47,14 @@ main = do
             { name: "id"
             , parameters: [PatVar "x"]
             , body: ExprVar "x"
+            , guards: []
             , typeSignature: Nothing
             }
         , DeclFunction
             { name: "main"
             , parameters: []
             , body: ExprApp (ExprVar "id") (ExprLit (LitInt 42))
+            , guards: []
             , typeSignature: Nothing
             }
         ]
@@ -66,6 +70,7 @@ main = do
             { name: "main"
             , parameters: []
             , body: ExprIf (ExprLit (LitBool true)) (ExprLit (LitInt 1)) (ExprLit (LitInt 0))
+            , guards: []
             , typeSignature: Nothing
             }
         ]
@@ -81,6 +86,7 @@ main = do
             { name: "main"
             , parameters: []
             , body: ExprList [ExprLit (LitInt 1), ExprLit (LitInt 2), ExprLit (LitInt 3)]
+            , guards: []
             , typeSignature: Nothing
             }
         ]
@@ -96,6 +102,7 @@ main = do
             { name: "main"
             , parameters: []
             , body: ExprRecord [Tuple "x" (ExprLit (LitInt 10)), Tuple "y" (ExprLit (LitInt 20))]
+            , guards: []
             , typeSignature: Nothing
             }
         ]
@@ -113,6 +120,7 @@ main = do
             , body: ExprApp
                 (ExprLambda [PatVar "x"] (ExprBinOp "*" (ExprVar "x") (ExprLit (LitInt 2))))
                 (ExprLit (LitInt 21))
+            , guards: []
             , typeSignature: Nothing
             }
         ]
@@ -131,6 +139,7 @@ main = do
                 (ExprBinOp ">" (ExprLit (LitInt 5)) (ExprLit (LitInt 3)))
                 (ExprLit (LitInt 1))
                 (ExprLit (LitInt 0))
+            , guards: []
             , typeSignature: Nothing
             }
         ]
@@ -146,6 +155,7 @@ main = do
             { name: "main"
             , parameters: []
             , body: ExprBinOp "&&" (ExprLit (LitBool true)) (ExprLit (LitBool false))
+            , guards: []
             , typeSignature: Nothing
             }
         ]
@@ -161,12 +171,14 @@ main = do
             { name: "first"
             , parameters: [PatCons (PatVar "h") (PatVar "t")]
             , body: ExprVar "h"
+            , guards: []
             , typeSignature: Nothing
             }
         , DeclFunction
             { name: "main"
             , parameters: []
             , body: ExprApp (ExprVar "first") (ExprList [ExprLit (LitInt 42), ExprLit (LitInt 1), ExprLit (LitInt 2)])
+            , guards: []
             , typeSignature: Nothing
             }
         ]
@@ -182,12 +194,14 @@ main = do
             { name: "getX"
             , parameters: [PatRecord [Tuple "x" (PatVar "x")]]
             , body: ExprVar "x"
+            , guards: []
             , typeSignature: Nothing
             }
         , DeclFunction
             { name: "main"
             , parameters: []
             , body: ExprApp (ExprVar "getX") (ExprRecord [Tuple "x" (ExprLit (LitInt 99)), Tuple "y" (ExprLit (LitInt 1))])
+            , guards: []
             , typeSignature: Nothing
             }
         ]
@@ -208,12 +222,14 @@ main = do
                   , body: ExprBinOp "+" (ExprVar "h") (ExprApp (ExprVar "sumList") (ExprVar "t"))
                   }
                 ]
+            , guards: []
             , typeSignature: Nothing
             }
         , DeclFunction
             { name: "main"
             , parameters: []
             , body: ExprApp (ExprVar "sumList") (ExprList [ExprLit (LitInt 1), ExprLit (LitInt 2), ExprLit (LitInt 3), ExprLit (LitInt 4), ExprLit (LitInt 5)])
+            , guards: []
             , typeSignature: Nothing
             }
         ]
@@ -232,12 +248,14 @@ main = do
                 (ExprBinOp "==" (ExprVar "n") (ExprLit (LitInt 0)))
                 (ExprLit (LitInt 1))
                 (ExprBinOp "*" (ExprVar "n") (ExprApp (ExprVar "fact") (ExprBinOp "-" (ExprVar "n") (ExprLit (LitInt 1)))))
+            , guards: []
             , typeSignature: Nothing
             }
         , DeclFunction
             { name: "main"
             , parameters: []
             , body: ExprApp (ExprVar "fact") (ExprLit (LitInt 5))
+            , guards: []
             , typeSignature: Nothing
             }
         ]
@@ -257,6 +275,7 @@ main = do
                   (ExprRecord [Tuple "x" (ExprLit (LitInt 1)), Tuple "y" (ExprLit (LitInt 2))])
                   [Tuple "x" (ExprLit (LitInt 100))])
                 "x"
+            , guards: []
             , typeSignature: Nothing
             }
         ]
@@ -272,6 +291,7 @@ main = do
             { name: "main"
             , parameters: []
             , body: ExprUnaryOp "-" (ExprLit (LitInt 42))
+            , guards: []
             , typeSignature: Nothing
             }
         ]
@@ -291,6 +311,7 @@ main = do
                 , DoExpr (ExprLit (LitInt 2))
                 , DoExpr (ExprLit (LitInt 42))
                 ]
+            , guards: []
             , typeSignature: Nothing
             }
         ]
@@ -310,6 +331,7 @@ main = do
                 , DoLet [{ pattern: PatVar "y", value: ExprLit (LitInt 20), typeAnn: Nothing }]
                 , DoExpr (ExprBinOp "+" (ExprVar "x") (ExprVar "y"))
                 ]
+            , guards: []
             , typeSignature: Nothing
             }
         ]
@@ -325,6 +347,7 @@ main = do
             { name: "main"
             , parameters: []
             , body: ExprBinOp "<>" (ExprLit (LitString "Hello, ")) (ExprLit (LitString "World!"))
+            , guards: []
             , typeSignature: Nothing
             }
         ]

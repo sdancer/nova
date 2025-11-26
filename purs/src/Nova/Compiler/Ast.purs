@@ -28,8 +28,21 @@ type FunctionDeclaration =
   { name :: String
   , parameters :: Array Pattern
   , body :: Expr
+  , guards :: Array GuardedExpr
   , typeSignature :: Maybe TypeSignature
   }
+
+-- | A guarded expression (for pattern guards)
+-- | e.g., `| cond = expr` or `| Pat <- expr, cond = expr`
+type GuardedExpr =
+  { guards :: Array GuardClause
+  , body :: Expr
+  }
+
+-- | A single guard clause within a guarded expression
+data GuardClause
+  = GuardExpr Expr                -- ^ Simple boolean guard: `| cond`
+  | GuardPat Pattern Expr         -- ^ Pattern guard: `| Pat <- expr`
 
 -- | Type declaration
 type TypeDeclaration =

@@ -44,6 +44,7 @@ main = do
       addFunc = { name: "add"
                 , parameters: [PatVar "x", PatVar "y"]
                 , body: ExprBinOp "+" (ExprVar "x") (ExprVar "y")
+                , guards: []
                 , typeSignature: Nothing
                 }
   log $ "function:\n" <> genFunction ctx addFunc
