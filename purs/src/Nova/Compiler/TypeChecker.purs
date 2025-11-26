@@ -519,14 +519,63 @@ inferClauses env scrutTy resultTy clauses initSub = go env scrutTy resultTy clau
         in case inferPat e clause.pattern sTy' of
           Left err -> Left err
           Right patRes ->
-            case infer patRes.env clause.body of
+            -- Check guard if present (guards should be Bool)
+            case inferGuard patRes.env clause.guard of
               Left err -> Left err
-              Right bodyRes ->
-                case unify (applySubst bodyRes.sub rTy') bodyRes.ty of
-                  Left ue -> Left (UnifyErr ue)
-                  Right s ->
-                    let newSub = composeSubst s (composeSubst bodyRes.sub (composeSubst patRes.sub sub))
-                    in go e sTy rTy rest newSub
+              Right guardRes ->
+                case infer guardRes.env clause.body of
+                  Left err -> Left err
+                  Right bodyRes ->
+                    case unify (applySubst bodyRes.sub rTy') bodyRes.ty of
+                      Left ue -> Left (UnifyErr ue)
+                      Right s ->
+                        let newSub = composeSubst s (composeSubst bodyRes.sub (composeSubst guardRes.sub (composeSubst patRes.sub sub)))
+                        in go e sTy rTy rest newSub
+
+    -- Infer a guard expression (if present)
+    -- Pattern guards like `Pat <- Expr` need special handling to bind variables
+    inferGuard :: Env -> Maybe Expr -> Either TCError { env :: Env, sub :: Subst }
+    inferGuard e Nothing = Right { env: e, sub: emptySubst }
+    inferGuard e (Just guardExpr) = inferGuardExpr e guardExpr
+
+    -- Handle pattern guard expressions recursively
+    inferGuardExpr :: Env -> Expr -> Either TCError { env :: Env, sub :: Subst }
+    -- Handle && (composition of guards)
+    inferGuardExpr e (ExprBinOp "&&" left right) =
+      case inferGuardExpr e left of
+        Left err -> Left err
+        Right leftRes ->
+          case inferGuardExpr leftRes.env right of
+            Left err -> Left err
+            Right rightRes ->
+              Right { env: rightRes.env, sub: composeSubst rightRes.sub leftRes.sub }
+    -- Handle pattern guard: Pat <- Expr
+    inferGuardExpr e (ExprBinOp "<-" patExpr valExpr) =
+      case infer e valExpr of
+        Left err -> Left err
+        Right valRes ->
+          -- Convert the pattern expression to a pattern and infer bindings
+          let pat = exprToPattern patExpr
+          in case inferPat valRes.env pat valRes.ty of
+            Left err -> Left err
+            Right patRes -> Right { env: patRes.env, sub: composeSubst patRes.sub valRes.sub }
+    -- Handle comma-separated guards (treated like &&)
+    inferGuardExpr e (ExprBinOp "," left right) =
+      inferGuardExpr e (ExprBinOp "&&" left right)
+    -- Regular boolean expression
+    inferGuardExpr e expr =
+      case infer e expr of
+        Left err -> Left err
+        Right res -> Right { env: res.env, sub: res.sub }
+
+    -- Convert an expression that's being used as a pattern to an actual Pattern
+    exprToPattern :: Expr -> Pattern
+    exprToPattern (ExprVar name) = PatVar name
+    exprToPattern (ExprApp (ExprVar con) arg) = PatCon con [exprToPattern arg]
+    exprToPattern (ExprApp (ExprApp (ExprVar con) arg1) arg2) = PatCon con [exprToPattern arg1, exprToPattern arg2]
+    exprToPattern (ExprLit lit) = PatLit lit
+    exprToPattern (ExprParens e) = exprToPattern e
+    exprToPattern _ = PatWildcard
 
 -- | Type check a function declaration
 -- For recursive functions, we first add a fresh type var for the function name
@@ -611,13 +660,39 @@ typeExprToType varMap (TyExprVar name) =
 typeExprToType varMap (TyExprCon name) =
   -- Handle well-known type aliases
   case name of
+    -- Type wildcard/hole - use a special placeholder type var
+    "_" -> TyVar (mkTVar (-999) "_")
     "TCon" -> TyRecord { fields: Map.fromFoldable [Tuple "name" tString, Tuple "args" (tArray tTypeHolder)], row: Nothing }
     "TVar" -> TyRecord { fields: Map.fromFoldable [Tuple "id" tInt, Tuple "name" tString], row: Nothing }
     "Token" -> TyRecord { fields: Map.fromFoldable [Tuple "tokenType" (TyCon (mkTCon "TokenType" [])), Tuple "value" tString, Tuple "line" tInt, Tuple "column" tInt, Tuple "pos" tInt], row: Nothing }
+    -- Type aliases from Types.purs
+    "Subst" -> TyCon (mkTCon "Map.Map" [tInt, tTypeHolder])
+    "Env" -> TyRecord { fields: Map.fromFoldable [Tuple "bindings" (TyCon (mkTCon "Map.Map" [tString, tSchemeHolder])), Tuple "counter" tInt, Tuple "registryLayer" (TyCon (mkTCon "Maybe" [tInt])), Tuple "namespace" (TyCon (mkTCon "Maybe" [tString]))], row: Nothing }
+    "Scheme" -> TyRecord { fields: Map.fromFoldable [Tuple "vars" (tArray tTVarHolder), Tuple "ty" tTypeHolder], row: Nothing }
+    -- FunctionDeclaration record type alias
+    "FunctionDeclaration" -> TyRecord { fields: Map.fromFoldable [Tuple "name" tString, Tuple "parameters" (tArray tPatternHolder), Tuple "body" tExprHolder, Tuple "guards" (tArray tGuardedExprHolder), Tuple "typeSignature" (TyCon (mkTCon "Maybe" [tTypeSigHolder])), Tuple "whereBindings" (tArray tLetBindHolder)], row: Nothing }
+    "DataConstructor" -> TyRecord { fields: Map.fromFoldable [Tuple "name" tString, Tuple "fields" (tArray tDataFieldHolder)], row: Nothing }
+    "DataField" -> TyRecord { fields: Map.fromFoldable [Tuple "name" (TyCon (mkTCon "Maybe" [tString])), Tuple "ty" tTypeExprHolder], row: Nothing }
+    "TypeSignature" -> TyRecord { fields: Map.fromFoldable [Tuple "name" tString, Tuple "typeVars" (tArray tString), Tuple "constraints" (tArray tConstraintHolder), Tuple "ty" tTypeExprHolder], row: Nothing }
+    "LetBind" -> TyRecord { fields: Map.fromFoldable [Tuple "pattern" tPatternHolder, Tuple "value" tExprHolder], row: Nothing }
+    "CaseClause" -> TyRecord { fields: Map.fromFoldable [Tuple "pattern" tPatternHolder, Tuple "guards" (tArray tGuardedExprHolder)], row: Nothing }
+    "GuardedExpr" -> TyRecord { fields: Map.fromFoldable [Tuple "guards" (tArray tGuardClauseHolder), Tuple "expr" tExprHolder], row: Nothing }
+    "GuardClause" -> TyRecord { fields: Map.fromFoldable [Tuple "expr" tExprHolder], row: Nothing }
     _ -> TyCon (mkTCon name [])
   where
     -- Avoid circular dependency with tType
     tTypeHolder = TyCon (mkTCon "Type" [])
+    tTVarHolder = TyRecord { fields: Map.fromFoldable [Tuple "id" tInt, Tuple "name" tString], row: Nothing }
+    tSchemeHolder = TyRecord { fields: Map.fromFoldable [Tuple "vars" (tArray tTVarHolder), Tuple "ty" tTypeHolder], row: Nothing }
+    tPatternHolder = TyCon (mkTCon "Pattern" [])
+    tExprHolder = TyCon (mkTCon "Expr" [])
+    tTypeSigHolder = TyRecord { fields: Map.fromFoldable [Tuple "name" tString, Tuple "typeVars" (tArray tString), Tuple "constraints" (tArray (TyCon (mkTCon "Constraint" []))), Tuple "ty" (TyCon (mkTCon "TypeExpr" []))], row: Nothing }
+    tLetBindHolder = TyRecord { fields: Map.fromFoldable [Tuple "pattern" tPatternHolder, Tuple "value" tExprHolder], row: Nothing }
+    tGuardedExprHolder = TyRecord { fields: Map.fromFoldable [Tuple "guards" (tArray tGuardClauseHolder), Tuple "expr" tExprHolder], row: Nothing }
+    tGuardClauseHolder = TyRecord { fields: Map.fromFoldable [Tuple "expr" tExprHolder], row: Nothing }
+    tDataFieldHolder = TyRecord { fields: Map.fromFoldable [Tuple "name" (TyCon (mkTCon "Maybe" [tString])), Tuple "ty" (TyCon (mkTCon "TypeExpr" []))], row: Nothing }
+    tTypeExprHolder = TyCon (mkTCon "TypeExpr" [])
+    tConstraintHolder = TyCon (mkTCon "Constraint" [])
 typeExprToType varMap (TyExprApp f arg) =
   case typeExprToType varMap f of
     TyCon tc -> TyCon { name: tc.name, args: Array.snoc tc.args (typeExprToType varMap arg) }

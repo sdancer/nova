@@ -1,0 +1,89 @@
+2025-11-26T01:47:11.608Z [ERROR] Failed to save config with lock: Error: ENOENT: no such file or directory, lstat '/home/sdancer/.claude.json'
+2025-11-26T01:47:11.609Z [DEBUG] Writing to temp file: /home/sdancer/.claude.json.tmp.1434.1764121631609
+2025-11-26T01:47:11.609Z [DEBUG] Setting permissions for new file: 600
+2025-11-26T01:47:11.617Z [DEBUG] Temp file written successfully, size: 103 bytes
+2025-11-26T01:47:11.617Z [DEBUG] Renaming /home/sdancer/.claude.json.tmp.1434.1764121631609 to /home/sdancer/.claude.json
+2025-11-26T01:47:11.618Z [DEBUG] File /home/sdancer/.claude.json written atomically
+2025-11-26T01:47:11.628Z [DEBUG] [LSP MANAGER] initializeLspServerManager() called
+2025-11-26T01:47:11.628Z [DEBUG] [LSP MANAGER] Created manager instance, state=pending
+2025-11-26T01:47:11.628Z [DEBUG] [LSP MANAGER] Starting async initialization (generation 1)
+2025-11-26T01:47:11.628Z [DEBUG] [LSP SERVER MANAGER] initialize() called
+2025-11-26T01:47:11.628Z [DEBUG] [LSP SERVER MANAGER] Calling getAllLspServers()
+2025-11-26T01:47:11.631Z [DEBUG] Writing to temp file: /home/sdancer/.claude.json.tmp.1434.1764121631631
+2025-11-26T01:47:11.631Z [DEBUG] Preserving file permissions: 100600
+2025-11-26T01:47:11.642Z [DEBUG] Temp file written successfully, size: 183 bytes
+2025-11-26T01:47:11.642Z [DEBUG] Applied original permissions to temp file
+2025-11-26T01:47:11.642Z [DEBUG] Renaming /home/sdancer/.claude.json.tmp.1434.1764121631631 to /home/sdancer/.claude.json
+2025-11-26T01:47:11.642Z [DEBUG] File /home/sdancer/.claude.json written atomically
+2025-11-26T01:47:11.662Z [DEBUG] Writing to temp file: /home/sdancer/.claude.json.tmp.1434.1764121631662
+2025-11-26T01:47:11.662Z [DEBUG] Preserving file permissions: 100600
+2025-11-26T01:47:11.677Z [DEBUG] Temp file written successfully, size: 220 bytes
+2025-11-26T01:47:11.677Z [DEBUG] Applied original permissions to temp file
+2025-11-26T01:47:11.677Z [DEBUG] Renaming /home/sdancer/.claude.json.tmp.1434.1764121631662 to /home/sdancer/.claude.json
+2025-11-26T01:47:11.677Z [DEBUG] File /home/sdancer/.claude.json written atomically
+2025-11-26T01:47:11.678Z [DEBUG] Writing to temp file: /home/sdancer/.claude.json.tmp.1434.1764121631678
+2025-11-26T01:47:11.678Z [DEBUG] Preserving file permissions: 100600
+2025-11-26T01:47:11.686Z [DEBUG] Temp file written successfully, size: 255 bytes
+2025-11-26T01:47:11.686Z [DEBUG] Applied original permissions to temp file
+2025-11-26T01:47:11.686Z [DEBUG] Renaming /home/sdancer/.claude.json.tmp.1434.1764121631678 to /home/sdancer/.claude.json
+2025-11-26T01:47:11.686Z [DEBUG] File /home/sdancer/.claude.json written atomically
+2025-11-26T01:47:11.687Z [DEBUG] Found 0 plugins (0 enabled, 0 disabled)
+2025-11-26T01:47:11.689Z [DEBUG] Total LSP servers loaded: 0
+2025-11-26T01:47:11.715Z [DEBUG] Loading skills from directories: managed=/etc/claude-code/.claude/skills, user=/home/sdancer/.claude/skills, project=/home/sdancer/.claude/skills
+2025-11-26T01:47:11.715Z [DEBUG] >>>>> getPluginSkills CALLED <<<<<
+2025-11-26T01:47:11.742Z [DEBUG] Metrics opt-out check failed: No API key available
+2025-11-26T01:47:11.745Z [DEBUG] Creating shell snapshot for bash (/bin/bash)
+2025-11-26T01:47:11.745Z [DEBUG] Looking for shell config file: /home/sdancer/.bashrc
+2025-11-26T01:47:11.745Z [DEBUG] Snapshots directory: /home/sdancer/.claude/shell-snapshots
+2025-11-26T01:47:11.745Z [DEBUG] Creating snapshot at: /home/sdancer/.claude/shell-snapshots/snapshot-bash-1764121631745-x46be9.sh
+2025-11-26T01:47:11.745Z [DEBUG] Shell binary exists: true
+2025-11-26T01:47:11.745Z [DEBUG] Execution timeout: 10000ms
+2025-11-26T01:47:11.746Z [DEBUG] Writing to temp file: /home/sdancer/.claude/todos/12644c64-9b6e-4e5e-8c9c-fcb3f82b626b-agent-12644c64-9b6e-4e5e-8c9c-fcb3f82b626b.json.tmp.1434.1764121631746
+2025-11-26T01:47:11.752Z [DEBUG] Temp file written successfully, size: 2 bytes
+2025-11-26T01:47:11.752Z [DEBUG] Renaming /home/sdancer/.claude/todos/12644c64-9b6e-4e5e-8c9c-fcb3f82b626b-agent-12644c64-9b6e-4e5e-8c9c-fcb3f82b626b.json.tmp.1434.1764121631746 to /home/sdancer/.claude/todos/12644c64-9b6e-4e5e-8c9c-fcb3f82b626b-agent-12644c64-9b6e-4e5e-8c9c-fcb3f82b626b.json
+2025-11-26T01:47:11.752Z [DEBUG] File /home/sdancer/.claude/todos/12644c64-9b6e-4e5e-8c9c-fcb3f82b626b-agent-12644c64-9b6e-4e5e-8c9c-fcb3f82b626b.json written atomically
+2025-11-26T01:47:11.757Z [DEBUG] [LSP SERVER MANAGER] getAllLspServers returned 0 server(s)
+2025-11-26T01:47:11.757Z [DEBUG] LSP manager initialized with 0 servers
+2025-11-26T01:47:11.757Z [DEBUG] getPluginSkills: Processing 0 enabled plugins
+2025-11-26T01:47:11.757Z [DEBUG] Total plugin skills loaded: 0
+2025-11-26T01:47:11.757Z [DEBUG] Total plugin commands loaded: 0
+2025-11-26T01:47:11.757Z [DEBUG] Registered 0 hooks from 0 plugins
+2025-11-26T01:47:11.758Z [DEBUG] LSP server manager initialized successfully
+2025-11-26T01:47:11.758Z [DEBUG] LSP notification handlers registered successfully for all 0 server(s)
+2025-11-26T01:47:11.758Z [DEBUG] Loaded 0 unique skills (managed: 0, user: 0, project: 0, duplicates removed: 0)
+2025-11-26T01:47:11.758Z [DEBUG] Metrics check failed, defaulting to disabled
+2025-11-26T01:47:11.759Z [DEBUG] getSkills returning: 0 skill dir commands, 0 plugin skills
+2025-11-26T01:47:11.788Z [DEBUG] Install: Starting installation process (force=false, target=undefined)
+2025-11-26T01:47:11.788Z [DEBUG] Install: Calling installLatest(force=true, target=undefined, forceReinstall=false)
+2025-11-26T01:47:11.792Z [DEBUG] Git remote URL: null
+2025-11-26T01:47:11.792Z [DEBUG] No git remote URL found
+2025-11-26T01:47:11.792Z [DEBUG] Not in a GitHub repository, skipping path mapping update
+2025-11-26T01:47:11.793Z [DEBUG] Shell snapshot created successfully (3079 bytes)
+2025-11-26T01:47:11.874Z [DEBUG] Writing to temp file: /home/sdancer/.claude.json.tmp.1434.1764121631874
+2025-11-26T01:47:11.874Z [DEBUG] Preserving file permissions: 100600
+2025-11-26T01:47:11.883Z [DEBUG] Temp file written successfully, size: 41410 bytes
+2025-11-26T01:47:11.883Z [DEBUG] Applied original permissions to temp file
+2025-11-26T01:47:11.883Z [DEBUG] Renaming /home/sdancer/.claude.json.tmp.1434.1764121631874 to /home/sdancer/.claude.json
+2025-11-26T01:47:11.883Z [DEBUG] File /home/sdancer/.claude.json written atomically
+2025-11-26T01:47:11.911Z [DEBUG] Writing to temp file: /home/sdancer/.claude.json.tmp.1434.1764121631911
+2025-11-26T01:47:11.911Z [DEBUG] Preserving file permissions: 100600
+2025-11-26T01:47:11.918Z [DEBUG] Temp file written successfully, size: 41470 bytes
+2025-11-26T01:47:11.918Z [DEBUG] Applied original permissions to temp file
+2025-11-26T01:47:11.918Z [DEBUG] Renaming /home/sdancer/.claude.json.tmp.1434.1764121631911 to /home/sdancer/.claude.json
+2025-11-26T01:47:11.918Z [DEBUG] File /home/sdancer/.claude.json written atomically
+2025-11-26T01:47:12.261Z [DEBUG] Checking for native installer update to version 2.0.54
+2025-11-26T01:47:12.267Z [DEBUG] Downloading native installer version 2.0.54
+2025-11-26T01:47:50.675Z [DEBUG] Successfully updated to version 2.0.54
+2025-11-26T01:47:50.676Z [DEBUG] Writing to temp file: /home/sdancer/.claude.json.tmp.1434.1764121670676
+2025-11-26T01:47:50.676Z [DEBUG] Preserving file permissions: 100600
+2025-11-26T01:47:50.974Z [DEBUG] Temp file written successfully, size: 41511 bytes
+2025-11-26T01:47:50.974Z [DEBUG] Applied original permissions to temp file
+2025-11-26T01:47:50.974Z [DEBUG] Renaming /home/sdancer/.claude.json.tmp.1434.1764121670676 to /home/sdancer/.claude.json
+2025-11-26T01:47:50.975Z [DEBUG] File /home/sdancer/.claude.json written atomically
+2025-11-26T01:47:50.975Z [DEBUG] Native installer: Set installMethod to "native" and disabled legacy auto-updater for protection
+2025-11-26T01:47:50.975Z [DEBUG] Install: installLatest returned version=2.0.54, wasUpdated=true, lockFailed=false
+2025-11-26T01:47:50.987Z [DEBUG] Install: Setup launcher completed with 1 messages
+2025-11-26T01:47:50.987Z [DEBUG] Install: Setup message: Native installation exists but ~/.local/bin is not in your PATH. Run:
+
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc
+2025-11-26T01:47:50.987Z [DEBUG] Install: Cleaning up npm installations after successful install
