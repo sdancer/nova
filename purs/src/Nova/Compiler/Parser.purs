@@ -879,11 +879,13 @@ parseBinding tokens = do
       success { pattern: pat, value: expr, typeAnn: Nothing } rest''
 
 -- | Parse function-style let binding: name param1 param2 = body
+-- Note: Constructor patterns like "Tuple x y" should NOT be parsed as function bindings
 parseFunctionStyleBinding :: Array Token -> ParseResult Ast.LetBind
 parseFunctionStyleBinding tokens =
-  -- Must start with an identifier (function name)
+  -- Must start with a lowercase identifier (function name)
+  -- Uppercase identifiers are constructors and should be pattern bindings
   case Array.head tokens of
-    Just t | t.tokenType == TokIdentifier ->
+    Just t | t.tokenType == TokIdentifier, not (isUpperCase t.value) ->
       let name = t.value
           rest = Array.drop 1 tokens
           Tuple params rest' = collectParams rest []
@@ -900,6 +902,10 @@ parseFunctionStyleBinding tokens =
                   in success { pattern: Ast.PatVar name, value: lambda, typeAnn: Nothing } rest'''
     _ -> failure "Not a function binding"
   where
+    isUpperCase s = case CU.charAt 0 s of
+      Just c -> c >= 'A' && c <= 'Z'
+      Nothing -> false
+
     -- Collect parameters until we hit = sign (returns params in order and remaining tokens)
     collectParams :: Array Token -> Array Ast.Pattern -> Tuple (Array Ast.Pattern) (Array Token)
     collectParams toks acc =

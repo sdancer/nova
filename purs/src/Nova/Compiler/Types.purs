@@ -150,6 +150,14 @@ extendEnv env name scheme = env { bindings = Map.insert name scheme env.bindings
 lookupEnv :: Env -> String -> Maybe Scheme
 lookupEnv env name = Map.lookup name env.bindings
 
+-- | Apply a substitution to all type schemes in an environment
+applySubstToEnv :: Subst -> Env -> Env
+applySubstToEnv sub env =
+  env { bindings = map applyToScheme env.bindings }
+  where
+    applyToScheme :: Scheme -> Scheme
+    applyToScheme s = s { ty = applySubst sub s.ty }
+
 -- | Generate a fresh type variable
 freshVar :: Env -> String -> Tuple TVar Env
 freshVar env hint =

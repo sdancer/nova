@@ -8,7 +8,7 @@ import Data.Array ((:))
 import Data.Array as Array
 import Data.Map as Map
 import Data.Set as Set
-import Nova.Compiler.Types (Type(..), TVar, Scheme, Env, Subst, emptySubst, composeSubst, applySubst, freeTypeVars, freeTypeVarsEnv, freshVar, extendEnv, lookupEnv, mkScheme, mkTVar, mkTCon, tInt, tString, tChar, tBool, tArrow, tArray)
+import Nova.Compiler.Types (Type(..), TVar, Scheme, Env, Subst, emptySubst, composeSubst, applySubst, applySubstToEnv, freeTypeVars, freeTypeVarsEnv, freshVar, extendEnv, lookupEnv, mkScheme, mkTVar, mkTCon, tInt, tString, tChar, tBool, tArrow, tArray)
 import Nova.Compiler.Ast (Expr(..), Literal(..), Pattern(..), LetBind, CaseClause, Declaration(..), FunctionDeclaration, DoStatement(..), DataType, DataConstructor, DataField, TypeExpr(..), TypeAlias)
 import Nova.Compiler.Unify (UnifyError, unify)
 
@@ -514,10 +514,16 @@ inferBinds env binds =
                 -- proper generalization. The lambda's internal bindings (parameters) should
                 -- not affect what gets generalized in the let binding.
                 let scheme = generalize e (applySubst (composeSubst patRes.sub valRes.sub) valRes.ty)
-                    -- But we do want to use the updated env's counter to avoid variable collisions
+                    -- For PatVar, we extend with generalized scheme
+                    -- For pattern bindings (Tuple, record, etc), use patRes.env which contains the bindings
+                    -- but preserve outer bindings and update counter
                     env3 = case bind.pattern of
                       PatVar name -> extendEnv (e { counter = patRes.env.counter }) name scheme
-                      _ -> e { counter = patRes.env.counter }
+                      _ ->
+                        -- Pattern bindings need to be kept from patRes.env
+                        -- Apply substitution to resolve type variables in pattern bindings
+                        let patEnv = applySubstToEnv (composeSubst patRes.sub valRes.sub) patRes.env
+                        in patEnv { bindings = Map.union patEnv.bindings e.bindings }
                 in inferBindsPass2 env3 rest (composeSubst patRes.sub (composeSubst valRes.sub sub))
 
 -- | Infer case clauses
@@ -534,8 +540,12 @@ inferClauses env scrutTy resultTy clauses initSub = go env scrutTy resultTy clau
         in case inferPat e clause.pattern sTy' of
           Left err -> Left err
           Right patRes ->
+            -- IMPORTANT: Apply pattern substitution to the environment
+            -- This ensures that pattern variables like 'n' in 'Just n' get their
+            -- types resolved from fresh type vars (a0) to concrete types (Int)
+            let patEnv = applySubstToEnv patRes.sub patRes.env
             -- Check guard if present (guards should be Bool)
-            case inferGuard patRes.env clause.guard of
+            in case inferGuard patEnv clause.guard of
               Left err -> Left err
               Right guardRes ->
                 case infer guardRes.env clause.body of
@@ -545,7 +555,10 @@ inferClauses env scrutTy resultTy clauses initSub = go env scrutTy resultTy clau
                       Left ue -> Left (UnifyErr ue)
                       Right s ->
                         let newSub = composeSubst s (composeSubst bodyRes.sub (composeSubst guardRes.sub (composeSubst patRes.sub sub)))
-                        in go e sTy rTy rest newSub
+                            -- IMPORTANT: Update counter from bodyRes.env to avoid type variable ID collisions
+                            -- We keep original bindings but use the new counter
+                            e' = e { counter = bodyRes.env.counter }
+                        in go e' sTy rTy rest newSub
 
     -- Infer a guard expression (if present)
     -- Pattern guards like `Pat <- Expr` need special handling to bind variables
