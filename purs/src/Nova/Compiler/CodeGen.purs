@@ -3,7 +3,7 @@ module Nova.Compiler.CodeGen where
 import Prelude
 import Data.Array (intercalate, mapWithIndex, length, (:))
 import Data.Array as Array
-import Data.Maybe (Maybe(..))
+import Data.Maybe (Maybe(..), fromMaybe)
 import Data.Tuple (Tuple(..), fst, snd)
 import Data.String as String
 import Data.String.CodeUnits as SCU
@@ -16,10 +16,11 @@ import Nova.Compiler.Ast (Module, Declaration(..), FunctionDeclaration, GuardedE
 type GenCtx =
   { moduleFuncs :: Set String  -- Names of module-level functions
   , locals :: Set String       -- Local variables (params, let-bindings)
+  , funcArities :: Array { name :: String, arity :: Int }  -- Function arities
   }
 
 emptyCtx :: GenCtx
-emptyCtx = { moduleFuncs: Set.empty, locals: Set.empty }
+emptyCtx = { moduleFuncs: Set.empty, locals: Set.empty, funcArities: [] }
 
 -- | Add local variables from a pattern
 addLocalsFromPattern :: Pattern -> GenCtx -> GenCtx
@@ -41,10 +42,23 @@ collectModuleFuncs decls = foldr go Set.empty decls
     go (DeclDataType dt) acc = foldr (\con s -> Set.insert con.name s) acc dt.constructors
     go _ acc = acc
 
+-- | Collect function arities from declarations
+collectFuncArities :: Array Declaration -> Array { name :: String, arity :: Int }
+collectFuncArities decls = Array.mapMaybe go decls
+  where
+    go (DeclFunction func) = Just { name: func.name, arity: length func.parameters }
+    go _ = Nothing
+
+-- | Look up the arity of a function
+lookupArity :: String -> GenCtx -> Maybe Int
+lookupArity name ctx = map _.arity (Array.find (\f -> f.name == name) ctx.funcArities)
+
 -- | Generate Elixir code from a module
 genModule :: Module -> String
 genModule mod =
-  let ctx = emptyCtx { moduleFuncs = collectModuleFuncs mod.declarations }
+  let ctx = emptyCtx { moduleFuncs = collectModuleFuncs mod.declarations
+                     , funcArities = collectFuncArities mod.declarations
+                     }
   in "defmodule " <> elixirModuleName mod.name <> " do\n" <>
      intercalate "\n\n" (map (genDeclaration ctx) mod.declarations) <>
      "\nend\n"
@@ -139,9 +153,13 @@ genPattern (PatVar name) = snakeCase name
 genPattern PatWildcard = "_"
 genPattern (PatLit lit) = genLiteral lit
 genPattern (PatCon name pats) =
-  if Array.null pats
-  then ":" <> snakeCase name
-  else "{:" <> snakeCase name <> ", " <> intercalate ", " (map genPattern pats) <> "}"
+  -- Handle qualified constructor names (e.g., Ast.PatVar -> pat_var)
+  let conName = case String.lastIndexOf (String.Pattern ".") name of
+        Just i -> String.drop (i + 1) name
+        Nothing -> name
+  in if Array.null pats
+     then ":" <> snakeCase conName
+     else "{:" <> snakeCase conName <> ", " <> intercalate ", " (map genPattern pats) <> "}"
 genPattern (PatRecord fields) =
   "%{" <> intercalate ", " (map genFieldPattern fields) <> "}"
   where
@@ -377,14 +395,17 @@ genExpr' ctx _ (ExprVar name) =
       -- Handle nullary data constructors as atoms (e.g., TokOperator -> :tok_operator)
       else if isNullaryConstructor name
       then ":" <> snakeCase name
-      -- If it's a module function used as a value (not in call position), call it
-      -- This handles zero-arity functions like tInt, tString which return values
+      -- If it's a module function used as a value (not in call position),
+      -- generate a function reference &func/arity
       else if isModuleFunc ctx name
-      then snakeCase name <> "()"  -- Call as zero-arity function
+      then case lookupArity name ctx of
+             Just 0 -> snakeCase name <> "()"  -- Zero-arity: call it
+             Just arity -> "(&" <> snakeCase name <> "/" <> show arity <> ")"  -- Generate function reference
+             Nothing -> "(&" <> snakeCase name <> "/1)"  -- Default to arity 1
       else if isTypesModuleFunc name
-      then "Nova.Compiler.Types." <> snakeCase name <> "()"
+      then "(&Nova.Compiler.Types." <> snakeCase name <> "/1)"
       else if isUnifyModuleFunc name
-      then "Nova.Compiler.Unify." <> snakeCase name <> "()"
+      then "(&Nova.Compiler.Unify." <> snakeCase name <> "/1)"
       else if isPreludeFunc name
       then "(&Nova.Runtime." <> snakeCase name <> "/1)"
       else snakeCase name
@@ -449,7 +470,9 @@ genExpr' ctx indent (ExprLambda pats body) =
 
 genExpr' ctx indent (ExprLet binds body) =
   let ctxWithBinds = foldr (\b c -> addLocalsFromPattern b.pattern c) ctx binds
-      bindCode = intercalate "\n" (map (genLetBindCtx ctx (indent + 1)) binds)
+      -- Sort bindings by dependencies: bindings that don't depend on others come first
+      sortedBinds = sortBindsByDependencies binds
+      bindCode = intercalate "\n" (map (genLetBindCtx ctx (indent + 1)) sortedBinds)
   in "\n" <> bindCode <> "\n" <> ind (indent + 1) <> genExpr' ctxWithBinds 0 body
 
 genExpr' ctx indent (ExprIf cond then_ else_) =
@@ -569,7 +592,11 @@ containsVar name (ExprLet binds body) =
   Array.any (\b -> containsVar name b.value) binds || containsVar name body
 containsVar name (ExprIf c t e) = containsVar name c || containsVar name t || containsVar name e
 containsVar name (ExprCase scrut clauses) =
-  containsVar name scrut || Array.any (\cl -> containsVar name cl.body) clauses
+  containsVar name scrut || Array.any (\cl -> containsVar name cl.body || containsVarInMaybeExpr name cl.guard) clauses
+  where
+    containsVarInMaybeExpr :: String -> Maybe Expr -> Boolean
+    containsVarInMaybeExpr n Nothing = false
+    containsVarInMaybeExpr n (Just e) = containsVar n e
 containsVar name (ExprDo stmts) = Array.any (containsVarInDoStmt name) stmts
 containsVar name (ExprBinOp _ l r) = containsVar name l || containsVar name r
 containsVar name (ExprUnaryOp _ e) = containsVar name e
@@ -591,6 +618,52 @@ containsVarInDoStmt name (DoExpr e) = containsVar name e
 lambdaArity :: Expr -> Int
 lambdaArity (ExprLambda pats _) = length pats
 lambdaArity _ = 0
+
+-- | Get the name bound by a let binding (if it's a simple variable pattern)
+getBindName :: LetBind -> Maybe String
+getBindName bind = case bind.pattern of
+  PatVar n -> Just n
+  _ -> Nothing
+
+-- | Get all variable names referenced in a let binding's value
+-- | Excludes self-references (those are handled by the fix combinator)
+getBindDependencies :: Array String -> LetBind -> Array String
+getBindDependencies allNames bind =
+  let selfName = getBindName bind
+  in Array.filter (\name -> Just name /= selfName && containsVar name bind.value) allNames
+
+-- | Sort let bindings by dependencies (topological sort)
+-- | Bindings that don't depend on other bindings come first
+sortBindsByDependencies :: Array LetBind -> Array LetBind
+sortBindsByDependencies binds =
+  let -- Get names of all bindings
+      allNames = Array.mapMaybe getBindName binds
+      -- Build dependency info for each binding
+      bindInfo = map (\b -> { bind: b, name: getBindName b, deps: getBindDependencies allNames b }) binds
+  in topoSort bindInfo []
+  where
+    -- Topological sort: repeatedly take bindings whose dependencies are all resolved
+    topoSort :: Array { bind :: LetBind, name :: Maybe String, deps :: Array String }
+             -> Array LetBind
+             -> Array LetBind
+    topoSort infos resolved =
+      if Array.null infos
+      then resolved
+      else
+        let resolvedNames = Array.mapMaybe getBindName resolved
+            -- Find bindings whose dependencies are all in resolved
+            partitioned = Array.partition (\info ->
+              Array.all (\d -> Array.elem d resolvedNames || not (isBindName d infos)) info.deps
+            ) infos
+            canResolve = partitioned.yes
+            remaining = partitioned.no
+        in if Array.null canResolve
+           -- No progress - just append remaining in original order (may have circular deps)
+           then resolved <> map _.bind remaining
+           else topoSort remaining (resolved <> map _.bind canResolve)
+
+    -- Check if a name is a binding name (not an external reference)
+    isBindName name infos = Array.any (\info -> info.name == Just name) infos
 
 -- | Generate let binding
 genLetBind :: Int -> LetBind -> String
@@ -660,6 +733,57 @@ isGuardSafeFunc name = Array.elem name
   , "tl", "trunc", "tuple_size"
   ]
 
+-- | Check if a guard expression contains a pattern bind (<-)
+containsPatternBind :: Expr -> Boolean
+containsPatternBind (ExprBinOp "<-" _ _) = true
+containsPatternBind (ExprBinOp _ l r) = containsPatternBind l || containsPatternBind r
+containsPatternBind (ExprParens e) = containsPatternBind e
+containsPatternBind _ = false
+
+-- | Split a guard into pattern binds and boolean conditions
+-- | Guard expressions are connected by && and contain <- for pattern binds
+-- | Returns (patternBinds, booleanConditions)
+splitGuard :: Expr -> { patBinds :: Array { pat :: Expr, expr :: Expr }, conds :: Array Expr }
+splitGuard (ExprBinOp "&&" l r) =
+  let lResult = splitGuard l
+      rResult = splitGuard r
+  in { patBinds: lResult.patBinds <> rResult.patBinds
+     , conds: lResult.conds <> rResult.conds
+     }
+splitGuard (ExprBinOp "<-" pat expr) =
+  { patBinds: [ { pat, expr } ], conds: [] }
+splitGuard (ExprParens e) = splitGuard e
+splitGuard e =
+  { patBinds: [], conds: [ e ] }
+
+-- | Convert a pattern expression back to a pattern for code generation
+-- | This handles patterns that were converted to expressions by the parser
+exprToPattern :: Expr -> String
+exprToPattern (ExprVar v) = snakeCase v
+exprToPattern (ExprApp (ExprVar "Just") arg) = "{:just, " <> exprToPattern arg <> "}"
+exprToPattern (ExprApp (ExprVar "Nothing") _) = ":nothing"
+exprToPattern (ExprVar "Nothing") = ":nothing"
+exprToPattern (ExprApp (ExprVar "Right") arg) = "{:right, " <> exprToPattern arg <> "}"
+exprToPattern (ExprApp (ExprVar "Left") arg) = "{:left, " <> exprToPattern arg <> "}"
+exprToPattern (ExprApp (ExprApp (ExprVar "Tuple") a) b) = "{:tuple, " <> exprToPattern a <> ", " <> exprToPattern b <> "}"
+exprToPattern (ExprApp f arg) =
+  -- Generic constructor application
+  case f of
+    ExprVar con -> "{:" <> snakeCase con <> ", " <> exprToPattern arg <> "}"
+    ExprApp _ _ ->
+      -- Nested application, need to flatten
+      let { func, args } = collectArgs (ExprApp f arg)
+      in case func of
+        ExprVar con -> "{:" <> snakeCase con <> ", " <> intercalate ", " (map exprToPattern args) <> "}"
+        _ -> "_"  -- Fallback
+    _ -> "_"  -- Fallback
+exprToPattern (ExprLit l) = genLiteral l
+exprToPattern (ExprRecord fields) = "%" <> genRecordFields fields
+  where
+    genRecordFields fs = "{" <> intercalate ", " (map (\(Tuple k v) -> snakeCase k <> ": " <> exprToPattern v) fs) <> "}"
+exprToPattern (ExprParens e) = exprToPattern e
+exprToPattern _ = "_"
+
 genCaseClauseCtx :: GenCtx -> Int -> CaseClause -> String
 genCaseClauseCtx ctx indent clause =
   let ctxWithPat = addLocalsFromPattern clause.pattern ctx
@@ -668,7 +792,17 @@ genCaseClauseCtx ctx indent clause =
   in case clause.guard of
     Nothing -> ind indent <> pat <> " -> " <> body
     Just g ->
-      if isGuardSafe g
+      -- Check if guard contains pattern binds (<-)
+      if containsPatternBind g
+      then
+        -- Use nested case statements for pattern guards
+        let { patBinds, conds } = splitGuard g
+            -- Update context with variables bound by pattern binds
+            ctxWithBinds = foldr addBindVars ctxWithPat patBinds
+            bodyWithBinds = genExpr' ctxWithBinds (indent + 1) clause.body
+        in ind indent <> pat <> " ->\n" <>
+           genPatternBindChain ctxWithPat (indent + 1) patBinds conds bodyWithBinds
+      else if isGuardSafe g
       then ind indent <> pat <> " when " <> genExpr' ctxWithPat indent g <> " -> " <> body
       else
         -- Guard uses non-guard-safe functions, convert to if in body
@@ -676,6 +810,51 @@ genCaseClauseCtx ctx indent clause =
         ind (indent + 1) <> "if " <> genExpr' ctxWithPat indent g <> " do\n" <>
         ind (indent + 2) <> body <> "\n" <>
         ind (indent + 1) <> "end"
+  where
+    -- Add variables from pattern bind expressions to context
+    addBindVars :: { pat :: Expr, expr :: Expr } -> GenCtx -> GenCtx
+    addBindVars { pat } c = addBindVarsFromExpr pat c
+
+    addBindVarsFromExpr :: Expr -> GenCtx -> GenCtx
+    addBindVarsFromExpr (ExprVar v) c = c { locals = Set.insert v c.locals }
+    addBindVarsFromExpr (ExprApp f arg) c = addBindVarsFromExpr f (addBindVarsFromExpr arg c)
+    addBindVarsFromExpr (ExprRecord fields) c = foldr (\(Tuple _ e) acc -> addBindVarsFromExpr e acc) c fields
+    addBindVarsFromExpr (ExprParens e) c = addBindVarsFromExpr e c
+    addBindVarsFromExpr _ c = c
+
+-- | Generate nested case statements for pattern binds
+-- | Each pattern bind becomes a case statement, with boolean conditions as guards
+genPatternBindChain :: GenCtx -> Int -> Array { pat :: Expr, expr :: Expr } -> Array Expr -> String -> String
+genPatternBindChain ctx indent patBinds conds body =
+  case Array.uncons patBinds of
+    Nothing ->
+      -- No more pattern binds, check conditions
+      if Array.null conds
+      then body
+      else
+        -- Generate if statement for boolean conditions
+        let condExpr = Array.foldl (\acc c -> ExprBinOp "&&" acc c) (fromMaybe (ExprLit (LitBool true)) (Array.head conds)) (fromMaybe [] (Array.tail conds))
+        in ind indent <> "if " <> genExpr' ctx indent condExpr <> " do\n" <>
+           ind (indent + 1) <> body <> "\n" <>
+           ind indent <> "end"
+    Just { head: pb, tail: restBinds } ->
+      -- Generate case for this pattern bind
+      let patStr = exprToPattern pb.pat
+          exprStr = genExpr' ctx indent pb.expr
+          -- Update context with bound variables
+          ctxWithBind = addBindVarsFromExpr pb.pat ctx
+          innerCode = genPatternBindChain ctxWithBind (indent + 1) restBinds conds body
+      in ind indent <> "case " <> exprStr <> " do\n" <>
+         ind (indent + 1) <> patStr <> " -> " <> innerCode <> "\n" <>
+         ind (indent + 1) <> "_ -> nil\n" <>
+         ind indent <> "end"
+  where
+    addBindVarsFromExpr :: Expr -> GenCtx -> GenCtx
+    addBindVarsFromExpr (ExprVar v) c = c { locals = Set.insert v c.locals }
+    addBindVarsFromExpr (ExprApp f arg) c = addBindVarsFromExpr f (addBindVarsFromExpr arg c)
+    addBindVarsFromExpr (ExprRecord fields) c = foldr (\(Tuple _ e) acc -> addBindVarsFromExpr e acc) c fields
+    addBindVarsFromExpr (ExprParens e) c = addBindVarsFromExpr e c
+    addBindVarsFromExpr _ c = c
 
 -- | Generate do statements
 genDoStmts :: Int -> Array DoStatement -> String

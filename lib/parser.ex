@@ -531,9 +531,12 @@ defmodule Nova.Compiler.Parser do
   end
 
   # Parse a function declaration with its type signature
+  # Split tokens into type signature tokens and rest (starting from function definition)
+  # We look for the function name at column 1 (start of line) to find the function definition,
+  # not just any occurrence of the name (which might be inside the type or other expressions)
   def split_type_and_rest(tokens, name) do
     Enum.split_while(tokens, fn
-      %Token{type: :identifier, value: ^name} -> false
+      %Token{type: :identifier, value: ^name, column: 1} -> false
       _ -> true
     end)
   end
@@ -842,11 +845,35 @@ defmodule Nova.Compiler.Parser do
 
     case tokens do
       [%Token{column: col} | _] when col > where_col ->
-        {:ok, bind, rest} = parse_binding(tokens)
-        collect_where_bindings(rest, where_col, [bind | acc])
+        # Check if this is a type signature (name ::) - skip it
+        if is_type_signature_line?(tokens) do
+          rest = skip_to_next_binding(tokens, where_col)
+          collect_where_bindings(rest, where_col, acc)
+        else
+          {:ok, bind, rest} = parse_binding(tokens)
+          collect_where_bindings(rest, where_col, [bind | acc])
+        end
 
       _ ->
         {:ok, Enum.reverse(acc), tokens}
+    end
+  end
+
+  # Check if tokens start with "name ::" (a type signature)
+  defp is_type_signature_line?([%Token{type: :identifier}, %Token{type: :operator, value: "::"} | _]), do: true
+  defp is_type_signature_line?(_), do: false
+
+  # Skip tokens until we hit a newline followed by content at where level or higher
+  defp skip_to_next_binding(tokens, where_col) do
+    case tokens do
+      [] -> []
+      [%Token{type: :newline} | rest] ->
+        case rest do
+          [%Token{column: col} | _] when col <= where_col -> tokens
+          [%Token{type: :newline} | _] -> skip_to_next_binding(rest, where_col)
+          _ -> rest
+        end
+      [_ | rest] -> skip_to_next_binding(rest, where_col)
     end
   end
 

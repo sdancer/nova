@@ -1,7 +1,6 @@
 module Nova.Compiler.Parser where
 
 import Prelude
-import Data.Array ((:))
 import Data.Array as Array
 import Data.Maybe (Maybe(..))
 import Data.Either (Either(..))
@@ -18,11 +17,9 @@ import Nova.Compiler.Ast as Ast
 type ParseResult a = Either String (Tuple a (Array Token))
 
 -- | Helper to create success result
-success :: forall a. a -> Array Token -> ParseResult a
 success a tokens = Right (Tuple a tokens)
 
 -- | Helper to create error result
-failure :: forall a. String -> ParseResult a
 failure msg = Left msg
 
 -- ------------------------------------------------------------
@@ -50,30 +47,42 @@ isLowerCase s = case CU.charAt 0 s of
 
 expectKeyword :: Array Token -> String -> ParseResult String
 expectKeyword tokens expected =
-  case skipNewlines tokens of
-    ts | Just t <- Array.head ts, t.tokenType == TokKeyword, t.value == expected ->
-      success expected (Array.drop 1 ts)
-    _ -> failure $ "Expected keyword '" <> expected <> "'"
+  let ts = skipNewlines tokens
+  in case Array.head ts of
+    Just t ->
+      if t.tokenType == TokKeyword && t.value == expected
+      then success expected (Array.drop 1 ts)
+      else failure $ "Expected keyword '" <> expected <> "'"
+    Nothing -> failure $ "Expected keyword '" <> expected <> "'"
 
 expectOperator :: Array Token -> String -> ParseResult String
 expectOperator tokens expected =
-  case skipNewlines tokens of
-    ts | Just t <- Array.head ts, t.tokenType == TokOperator, t.value == expected ->
-      success expected (Array.drop 1 ts)
-    _ -> failure $ "Expected operator '" <> expected <> "'"
+  let ts = skipNewlines tokens
+  in case Array.head ts of
+    Just t ->
+      if t.tokenType == TokOperator && t.value == expected
+      then success expected (Array.drop 1 ts)
+      else failure $ "Expected operator '" <> expected <> "'"
+    Nothing -> failure $ "Expected operator '" <> expected <> "'"
 
 expectDelimiter :: Array Token -> String -> ParseResult String
 expectDelimiter tokens expected =
-  case skipNewlines tokens of
-    ts | Just t <- Array.head ts, t.tokenType == TokDelimiter, t.value == expected ->
-      success expected (Array.drop 1 ts)
-    _ -> failure $ "Expected delimiter '" <> expected <> "'"
+  let ts = skipNewlines tokens
+  in case Array.head ts of
+    Just t ->
+      if t.tokenType == TokDelimiter && t.value == expected
+      then success expected (Array.drop 1 ts)
+      else failure $ "Expected delimiter '" <> expected <> "'"
+    Nothing -> failure $ "Expected delimiter '" <> expected <> "'"
 
 expectColon :: Array Token -> ParseResult String
 expectColon tokens =
   case Array.head tokens of
-    Just t | t.tokenType == TokOperator, t.value == ":" -> success ":" (Array.drop 1 tokens)
-    _ -> failure "Expected ':'  operator"
+    Just t ->
+      if t.tokenType == TokOperator && t.value == ":"
+      then success ":" (Array.drop 1 tokens)
+      else failure "Expected ':'  operator"
+    Nothing -> failure "Expected ':'  operator"
 
 -- ------------------------------------------------------------
 -- Basic parsers
@@ -81,29 +90,39 @@ expectColon tokens =
 
 parseIdentifier :: Array Token -> ParseResult Ast.Expr
 parseIdentifier tokens =
-  case skipNewlines tokens of
-    ts | Just t <- Array.head ts, t.tokenType == TokIdentifier ->
-      success (Ast.ExprVar t.value) (Array.drop 1 ts)
-    _ -> failure "Expected identifier"
+  let ts = skipNewlines tokens
+  in case Array.head ts of
+    Just t ->
+      if t.tokenType == TokIdentifier
+      then success (Ast.ExprVar t.value) (Array.drop 1 ts)
+      else failure "Expected identifier"
+    Nothing -> failure "Expected identifier"
 
 parseIdentifierName :: Array Token -> ParseResult String
 parseIdentifierName tokens =
-  case skipNewlines tokens of
-    ts | Just t <- Array.head ts, t.tokenType == TokIdentifier ->
-      success t.value (Array.drop 1 ts)
-    _ -> failure "Expected identifier"
+  let ts = skipNewlines tokens
+  in case Array.head ts of
+    Just t ->
+      if t.tokenType == TokIdentifier
+      then success t.value (Array.drop 1 ts)
+      else failure "Expected identifier"
+    Nothing -> failure "Expected identifier"
 
 parseLabel :: Array Token -> ParseResult String
 parseLabel tokens =
-  case skipNewlines tokens of
-    ts | Just t <- Array.head ts, t.tokenType == TokIdentifier || t.tokenType == TokKeyword ->
-      success t.value (Array.drop 1 ts)
-    _ -> failure "Expected label"
+  let ts = skipNewlines tokens
+  in case Array.head ts of
+    Just t ->
+      if t.tokenType == TokIdentifier || t.tokenType == TokKeyword
+      then success t.value (Array.drop 1 ts)
+      else failure "Expected label"
+    Nothing -> failure "Expected label"
 
 parseLiteral :: Array Token -> ParseResult Ast.Literal
 parseLiteral tokens =
-  case skipNewlines tokens of
-    ts | Just t <- Array.head ts -> case t.tokenType of
+  let ts = skipNewlines tokens
+  in case Array.head ts of
+    Just t -> case t.tokenType of
       TokNumber ->
         -- Check if it's an integer or float
         if String.contains (String.Pattern ".") t.value
@@ -111,10 +130,14 @@ parseLiteral tokens =
         else success (Ast.LitInt (readInt t.value)) (Array.drop 1 ts)
       TokString -> success (Ast.LitString t.value) (Array.drop 1 ts)
       TokChar -> success (Ast.LitChar (firstChar t.value)) (Array.drop 1 ts)
-      TokIdentifier | t.value == "true" -> success (Ast.LitBool true) (Array.drop 1 ts)
-      TokIdentifier | t.value == "false" -> success (Ast.LitBool false) (Array.drop 1 ts)
+      TokIdentifier ->
+        if t.value == "true"
+        then success (Ast.LitBool true) (Array.drop 1 ts)
+        else if t.value == "false"
+        then success (Ast.LitBool false) (Array.drop 1 ts)
+        else failure "Expected literal"
       _ -> failure "Expected literal"
-    _ -> failure "Expected literal"
+    Nothing -> failure "Expected literal"
   where
     readInt :: String -> Int
     readInt s = case Int.fromString s of
@@ -133,16 +156,18 @@ parseLiteral tokens =
 
 parseStringLiteral :: Array Token -> ParseResult String
 parseStringLiteral tokens =
-  case skipNewlines tokens of
-    ts | Just t <- Array.head ts, t.tokenType == TokString ->
-      success t.value (Array.drop 1 ts)
-    _ -> failure "Expected string literal"
+  let ts = skipNewlines tokens
+  in case Array.head ts of
+    Just t ->
+      if t.tokenType == TokString
+      then success t.value (Array.drop 1 ts)
+      else failure "Expected string literal"
+    Nothing -> failure "Expected string literal"
 
 -- ------------------------------------------------------------
 -- Combinator helpers
 -- ------------------------------------------------------------
 
-parseAny :: forall a. Array (Array Token -> ParseResult a) -> Array Token -> ParseResult a
 parseAny parsers tokens = go parsers
   where
     go ps = case Array.head ps of
@@ -151,20 +176,17 @@ parseAny parsers tokens = go parsers
         Right result -> Right result
         Left _ -> go (Array.drop 1 ps)
 
-parseMany :: forall a. (Array Token -> ParseResult a) -> Array Token -> ParseResult (Array a)
 parseMany parser tokens = go tokens []
   where
     go toks acc = case parser toks of
       Right (Tuple result rest) -> go rest (Array.snoc acc result)
       Left _ -> success acc toks
 
-parseSeparated :: forall a. (Array Token -> ParseResult a) -> (Array Token -> ParseResult String) -> Array Token -> ParseResult (Array a)
 parseSeparated parser separator tokens =
   case parser tokens of
     Left err -> Left err
     Right (Tuple first rest) -> parseSeparatedRest parser separator rest [first]
 
-parseSeparatedRest :: forall a. (Array Token -> ParseResult a) -> (Array Token -> ParseResult String) -> Array Token -> Array a -> ParseResult (Array a)
 parseSeparatedRest parser separator tokens acc =
   case separator tokens of
     Right (Tuple _ rest) -> case parser rest of
@@ -181,11 +203,15 @@ parseQualifiedIdentifier tokens =
   -- Don't consume an identifier at column 1 followed by :: (type signature start)
   let tokens' = skipNewlines tokens
   in case Array.head tokens' of
-    Just t | t.tokenType == TokIdentifier, t.column == 1 ->
-      case Array.head (Array.drop 1 tokens') of
-        Just t' | t'.tokenType == TokOperator, t'.value == "::" ->
-          failure "Not consuming top-level type signature"
+    Just t ->
+      if t.tokenType == TokIdentifier && t.column == 1
+      then case Array.head (Array.drop 1 tokens') of
+        Just t' ->
+          if t'.tokenType == TokOperator && t'.value == "::"
+          then failure "Not consuming top-level type signature"
+          else parseQualifiedIdentifierInner tokens'
         _ -> parseQualifiedIdentifierInner tokens'
+      else parseQualifiedIdentifierInner tokens'
     _ -> parseQualifiedIdentifierInner tokens'
   where
     parseQualifiedIdentifierInner toks =
@@ -201,11 +227,20 @@ parseQualifiedIdentifier tokens =
             -- If first part starts with lowercase, it's record field access chain
             -- If first part starts with uppercase, it's a qualified identifier
             case Array.head parts of
-              Just first | not (isUpperCase first) ->
-                -- Record field access: state.line.foo -> ((state).line).foo
-                let baseExpr = Ast.ExprVar first
-                    fields = Array.drop 1 parts
-                in success (Array.foldl Ast.ExprRecordAccess baseExpr fields) rest
+              Just first ->
+                if not (isUpperCase first)
+                then
+                  -- Record field access: state.line.foo -> ((state).line).foo
+                  let baseExpr = Ast.ExprVar first
+                      fields = Array.drop 1 parts
+                  in success (Array.foldl Ast.ExprRecordAccess baseExpr fields) rest
+                else
+                  -- Qualified identifier: Data.Array.head -> ExprQualified "Data.Array" "head"
+                  let allButLast = Array.take (Array.length parts - 1) parts
+                      lastName = Array.last parts
+                  in case lastName of
+                    Just name -> success (Ast.ExprQualified (String.joinWith "." allButLast) name) rest
+                    Nothing -> failure "Expected qualified identifier"
               _ ->
                 -- Qualified identifier: Data.Array.head -> ExprQualified "Data.Array" "head"
                 let allButLast = Array.take (Array.length parts - 1) parts
@@ -225,10 +260,13 @@ parseQualifiedIdentifier tokens =
 
 parseType :: Array Token -> ParseResult Ast.TypeExpr
 parseType tokens =
-  case skipNewlines tokens of
-    ts | Just t <- Array.head ts, t.tokenType == TokKeyword, t.value == "forall" ->
-      parseForallType ts
-    _ -> parseFunctionType tokens
+  let ts = skipNewlines tokens
+  in case Array.head ts of
+    Just t ->
+      if t.tokenType == TokKeyword && t.value == "forall"
+      then parseForallType ts
+      else parseFunctionType tokens
+    Nothing -> parseFunctionType tokens
 
 parseForallType :: Array Token -> ParseResult Ast.TypeExpr
 parseForallType tokens = do
@@ -241,11 +279,15 @@ parseForallType tokens = do
 parseFunctionType :: Array Token -> ParseResult Ast.TypeExpr
 parseFunctionType tokens = do
   Tuple left rest <- parseTypeTerm tokens
-  case skipNewlines rest of
-    ts | Just t <- Array.head ts, t.tokenType == TokOperator, t.value == "->" -> do
-      Tuple right rest' <- parseFunctionType (Array.drop 1 ts)
-      success (Ast.TyExprArrow left right) rest'
-    _ -> success left rest
+  let ts = skipNewlines rest
+  case Array.head ts of
+    Just t ->
+      if t.tokenType == TokOperator && t.value == "->"
+      then do
+        Tuple right rest' <- parseFunctionType (Array.drop 1 ts)
+        success (Ast.TyExprArrow left right) rest'
+      else success left rest
+    Nothing -> success left rest
 
 parseTypeTerm :: Array Token -> ParseResult Ast.TypeExpr
 parseTypeTerm tokens =
@@ -259,12 +301,16 @@ parseTypeTerm tokens =
 
 parseRecordType :: Array Token -> ParseResult Ast.TypeExpr
 parseRecordType tokens =
-  case skipNewlines tokens of
-    ts | Just t <- Array.head ts, t.tokenType == TokDelimiter, t.value == "{" -> do
-      Tuple fields rest <- parseSeparated parseRecordField (\t -> expectDelimiter t ",") (Array.drop 1 ts)
-      Tuple _ rest' <- expectDelimiter rest "}"
-      success (Ast.TyExprRecord fields Nothing) rest'
-    _ -> failure "Expected record type"
+  let ts = skipNewlines tokens
+  in case Array.head ts of
+    Just t ->
+      if t.tokenType == TokDelimiter && t.value == "{"
+      then do
+        Tuple fields rest <- parseSeparated parseRecordField (\tok -> expectDelimiter tok ",") (Array.drop 1 ts)
+        Tuple _ rest' <- expectDelimiter rest "}"
+        success (Ast.TyExprRecord fields Nothing) rest'
+      else failure "Expected record type"
+    Nothing -> failure "Expected record type"
 
 parseRecordField :: Array Token -> ParseResult (Tuple String Ast.TypeExpr)
 parseRecordField tokens = do
@@ -276,43 +322,56 @@ parseRecordField tokens = do
 
 parseListType :: Array Token -> ParseResult Ast.TypeExpr
 parseListType tokens =
-  case skipNewlines tokens of
-    ts | Just t <- Array.head ts, t.tokenType == TokDelimiter, t.value == "[" -> do
-      Tuple elemType rest <- parseType (Array.drop 1 ts)
-      Tuple _ rest' <- expectDelimiter rest "]"
-      success (Ast.TyExprApp (Ast.TyExprCon "Array") elemType) rest'
-    _ -> failure "Expected list type"
+  let ts = skipNewlines tokens
+  in case Array.head ts of
+    Just t ->
+      if t.tokenType == TokDelimiter && t.value == "["
+      then do
+        Tuple elemType rest <- parseType (Array.drop 1 ts)
+        Tuple _ rest' <- expectDelimiter rest "]"
+        success (Ast.TyExprApp (Ast.TyExprCon "Array") elemType) rest'
+      else failure "Expected list type"
+    Nothing -> failure "Expected list type"
 
 parseTupleType :: Array Token -> ParseResult Ast.TypeExpr
 parseTupleType tokens =
-  case skipNewlines tokens of
-    ts | Just t <- Array.head ts, t.tokenType == TokDelimiter, t.value == "(" -> do
-      Tuple elements rest <- parseSeparated parseType (\t -> expectDelimiter t ",") (Array.drop 1 ts)
-      Tuple _ rest' <- expectDelimiter rest ")"
-      case Array.length elements of
-        1 -> case Array.head elements of
-          Just e -> success e rest'
-          Nothing -> failure "Expected type"
-        _ -> success (Ast.TyExprTuple elements) rest'
-    _ -> failure "Expected tuple type"
+  let ts = skipNewlines tokens
+  in case Array.head ts of
+    Just t ->
+      if t.tokenType == TokDelimiter && t.value == "("
+      then do
+        Tuple elements rest <- parseSeparated parseType (\tok -> expectDelimiter tok ",") (Array.drop 1 ts)
+        Tuple _ rest' <- expectDelimiter rest ")"
+        case Array.length elements of
+          1 -> case Array.head elements of
+            Just e -> success e rest'
+            Nothing -> failure "Expected type"
+          _ -> success (Ast.TyExprTuple elements) rest'
+      else failure "Expected tuple type"
+    Nothing -> failure "Expected tuple type"
 
 parseBasicType :: Array Token -> ParseResult Ast.TypeExpr
 parseBasicType tokens =
-  case skipNewlines tokens of
-    ts | Just t <- Array.head ts, t.tokenType == TokIdentifier -> do
-      -- Check for qualified type name (e.g., Ast.Expr)
-      Tuple name rest <- parseQualifiedTypeName ts
-      Tuple args rest' <- parseMany parseTypeAtom rest
-      -- Lowercase names are type variables, uppercase are type constructors
-      let base = if isLowerCase name then Ast.TyExprVar name else Ast.TyExprCon name
-      case Array.length args of
-        0 -> success base rest'
-        _ -> success (foldTypeApp base args) rest'
-    ts | Just t <- Array.head ts, t.tokenType == TokDelimiter, t.value == "(" -> do
-      Tuple ty rest <- parseType (Array.drop 1 ts)
-      Tuple _ rest' <- expectDelimiter rest ")"
-      success ty rest'
-    _ -> failure "Expected basic type"
+  let ts = skipNewlines tokens
+  in case Array.head ts of
+    Just t ->
+      if t.tokenType == TokIdentifier
+      then do
+        -- Check for qualified type name (e.g., Ast.Expr)
+        Tuple name rest <- parseQualifiedTypeName ts
+        Tuple args rest' <- parseMany parseTypeAtom rest
+        -- Lowercase names are type variables, uppercase are type constructors
+        let base = if isLowerCase name then Ast.TyExprVar name else Ast.TyExprCon name
+        case Array.length args of
+          0 -> success base rest'
+          _ -> success (foldTypeApp base args) rest'
+      else if t.tokenType == TokDelimiter && t.value == "("
+      then do
+        Tuple ty rest <- parseType (Array.drop 1 ts)
+        Tuple _ rest' <- expectDelimiter rest ")"
+        success ty rest'
+      else failure "Expected basic type"
+    Nothing -> failure "Expected basic type"
   where
     foldTypeApp :: Ast.TypeExpr -> Array Ast.TypeExpr -> Ast.TypeExpr
     foldTypeApp base args = Array.foldl Ast.TyExprApp base args
@@ -330,31 +389,38 @@ parseTypeAtom tokens =
   -- indicates a new declaration, not a continuation of type arguments.
   -- Only accept atoms on the same line or properly indented.
   case Array.head tokens of
-    Just t | t.tokenType == TokNewline ->
-      -- Check what follows the newline
-      let rest = Array.drop 1 tokens in
-      case Array.head rest of
-        -- Another newline - skip blank lines but check next non-blank
-        Just t' | t'.tokenType == TokNewline -> parseTypeAtom rest
-        -- If next token is at column 1 (start of line), it's likely a new declaration
-        Just t' | t'.column <= 1 -> failure "Expected type atom"
-        -- Otherwise skip the newline and continue
-        _ -> parseTypeAtom rest
-    Just t | t.tokenType == TokDelimiter, t.value == "{" ->
-      parseRecordType tokens
-    Just t | t.tokenType == TokIdentifier -> do
-      -- Handle qualified type names like Ast.Expr
-      Tuple name rest <- parseQualifiedTypeName tokens
-      -- Lowercase names are type variables, uppercase are type constructors
-      success (if isLowerCase name then Ast.TyExprVar name else Ast.TyExprCon name) rest
-    Just t | t.tokenType == TokDelimiter, t.value == "(" -> do
-      Tuple ty rest <- parseType (Array.drop 1 tokens)
-      Tuple _ rest' <- expectDelimiter rest ")"
-      success ty rest'
-    Just t | t.tokenType == TokDelimiter, t.value == "[" -> do
-      Tuple elemType rest <- parseType (Array.drop 1 tokens)
-      Tuple _ rest' <- expectDelimiter rest "]"
-      success (Ast.TyExprApp (Ast.TyExprCon "Array") elemType) rest'
+    Just t ->
+      if t.tokenType == TokNewline
+      then
+        -- Check what follows the newline
+        let rest = Array.drop 1 tokens in
+        case Array.head rest of
+          Just t' ->
+            if t'.tokenType == TokNewline
+            then parseTypeAtom rest
+            else if t'.column <= 1
+            then failure "Expected type atom"
+            else parseTypeAtom rest
+          _ -> parseTypeAtom rest
+      else if t.tokenType == TokDelimiter && t.value == "{"
+      then parseRecordType tokens
+      else if t.tokenType == TokIdentifier
+      then do
+        -- Handle qualified type names like Ast.Expr
+        Tuple name rest <- parseQualifiedTypeName tokens
+        -- Lowercase names are type variables, uppercase are type constructors
+        success (if isLowerCase name then Ast.TyExprVar name else Ast.TyExprCon name) rest
+      else if t.tokenType == TokDelimiter && t.value == "("
+      then do
+        Tuple ty rest <- parseType (Array.drop 1 tokens)
+        Tuple _ rest' <- expectDelimiter rest ")"
+        success ty rest'
+      else if t.tokenType == TokDelimiter && t.value == "["
+      then do
+        Tuple elemType rest <- parseType (Array.drop 1 tokens)
+        Tuple _ rest' <- expectDelimiter rest "]"
+        success (Ast.TyExprApp (Ast.TyExprCon "Array") elemType) rest'
+      else failure "Expected type atom"
     _ -> failure "Expected type atom"
 
 -- ------------------------------------------------------------
@@ -378,17 +444,23 @@ parsePattern tokens =
 
 parseVarPattern :: Array Token -> ParseResult Ast.Pattern
 parseVarPattern tokens =
-  case skipNewlines tokens of
-    ts | Just t <- Array.head ts, t.tokenType == TokIdentifier ->
-      success (Ast.PatVar t.value) (Array.drop 1 ts)
-    _ -> failure "Expected variable pattern"
+  let ts = skipNewlines tokens
+  in case Array.head ts of
+    Just t ->
+      if t.tokenType == TokIdentifier
+      then success (Ast.PatVar t.value) (Array.drop 1 ts)
+      else failure "Expected variable pattern"
+    Nothing -> failure "Expected variable pattern"
 
 parseWildcardPattern :: Array Token -> ParseResult Ast.Pattern
 parseWildcardPattern tokens =
-  case skipNewlines tokens of
-    ts | Just t <- Array.head ts, t.tokenType == TokIdentifier, t.value == "_" ->
-      success Ast.PatWildcard (Array.drop 1 ts)
-    _ -> failure "Expected wildcard"
+  let ts = skipNewlines tokens
+  in case Array.head ts of
+    Just t ->
+      if t.tokenType == TokIdentifier && t.value == "_"
+      then success Ast.PatWildcard (Array.drop 1 ts)
+      else failure "Expected wildcard"
+    Nothing -> failure "Expected wildcard"
 
 parseLiteralPattern :: Array Token -> ParseResult Ast.Pattern
 parseLiteralPattern tokens = do
@@ -428,34 +500,48 @@ parseConsPattern tokens = do
 
 parseTuplePattern :: Array Token -> ParseResult Ast.Pattern
 parseTuplePattern tokens =
-  case skipNewlines tokens of
-    ts | Just t <- Array.head ts, t.tokenType == TokDelimiter, t.value == "(" -> do
-      Tuple elements rest <- parseSeparated parsePattern (\t -> expectDelimiter t ",") (Array.drop 1 ts)
-      Tuple _ rest' <- expectDelimiter rest ")"
-      success (Ast.PatRecord (Array.mapWithIndex (\i p -> Tuple (show i) p) elements)) rest'
-    _ -> failure "Expected tuple pattern"
+  let ts = skipNewlines tokens
+  in case Array.head ts of
+    Just t ->
+      if t.tokenType == TokDelimiter && t.value == "("
+      then do
+        Tuple elements rest <- parseSeparated parsePattern (\tok -> expectDelimiter tok ",") (Array.drop 1 ts)
+        Tuple _ rest' <- expectDelimiter rest ")"
+        success (Ast.PatRecord (Array.mapWithIndex (\i p -> Tuple (show i) p) elements)) rest'
+      else failure "Expected tuple pattern"
+    Nothing -> failure "Expected tuple pattern"
 
 parseListPattern :: Array Token -> ParseResult Ast.Pattern
 parseListPattern tokens =
-  case skipNewlines tokens of
-    ts | Just t <- Array.head ts, t.tokenType == TokDelimiter, t.value == "[" ->
-      case Array.head (Array.drop 1 ts) of
-        Just t' | t'.tokenType == TokDelimiter, t'.value == "]" ->
-          success (Ast.PatList []) (Array.drop 2 ts)
-        _ -> do
-          Tuple elements rest <- parseSeparated parsePattern (\t -> expectDelimiter t ",") (Array.drop 1 ts)
-          Tuple _ rest' <- expectDelimiter rest "]"
-          success (Ast.PatList elements) rest'
-    _ -> failure "Expected list pattern"
+  let ts = skipNewlines tokens
+  in case Array.head ts of
+    Just t ->
+      if t.tokenType == TokDelimiter && t.value == "["
+      then
+        case Array.head (Array.drop 1 ts) of
+          Just t' ->
+            if t'.tokenType == TokDelimiter && t'.value == "]"
+            then success (Ast.PatList []) (Array.drop 2 ts)
+            else do
+              Tuple elements rest <- parseSeparated parsePattern (\tok -> expectDelimiter tok ",") (Array.drop 1 ts)
+              Tuple _ rest' <- expectDelimiter rest "]"
+              success (Ast.PatList elements) rest'
+          Nothing -> failure "Expected list pattern"
+      else failure "Expected list pattern"
+    Nothing -> failure "Expected list pattern"
 
 parseRecordPattern :: Array Token -> ParseResult Ast.Pattern
 parseRecordPattern tokens =
-  case skipNewlines tokens of
-    ts | Just t <- Array.head ts, t.tokenType == TokDelimiter, t.value == "{" -> do
-      Tuple fields rest <- parseSeparated parseRecordFieldPattern (\t -> expectDelimiter t ",") (Array.drop 1 ts)
-      Tuple _ rest' <- expectDelimiter rest "}"
-      success (Ast.PatRecord fields) rest'
-    _ -> failure "Expected record pattern"
+  let ts = skipNewlines tokens
+  in case Array.head ts of
+    Just t ->
+      if t.tokenType == TokDelimiter && t.value == "{"
+      then do
+        Tuple fields rest <- parseSeparated parseRecordFieldPattern (\tok -> expectDelimiter tok ",") (Array.drop 1 ts)
+        Tuple _ rest' <- expectDelimiter rest "}"
+        success (Ast.PatRecord fields) rest'
+      else failure "Expected record pattern"
+    Nothing -> failure "Expected record pattern"
 
 parseRecordFieldPattern :: Array Token -> ParseResult (Tuple String Ast.Pattern)
 parseRecordFieldPattern tokens = do
@@ -472,12 +558,16 @@ parseRecordFieldPattern tokens = do
 
 parseParenPattern :: Array Token -> ParseResult Ast.Pattern
 parseParenPattern tokens =
-  case skipNewlines tokens of
-    ts | Just t <- Array.head ts, t.tokenType == TokDelimiter, t.value == "(" -> do
-      Tuple pat rest <- parsePattern (Array.drop 1 ts)
-      Tuple _ rest' <- expectDelimiter rest ")"
-      success (Ast.PatParens pat) rest'
-    _ -> failure "Expected parenthesized pattern"
+  let ts = skipNewlines tokens
+  in case Array.head ts of
+    Just t ->
+      if t.tokenType == TokDelimiter && t.value == "("
+      then do
+        Tuple pat rest <- parsePattern (Array.drop 1 ts)
+        Tuple _ rest' <- expectDelimiter rest ")"
+        success (Ast.PatParens pat) rest'
+      else failure "Expected parenthesized pattern"
+    Nothing -> failure "Expected parenthesized pattern"
 
 parseSimplePattern :: Array Token -> ParseResult Ast.Pattern
 parseSimplePattern tokens =
@@ -496,17 +586,21 @@ parseSimplePattern tokens =
 -- | e.g., Ast.PatWildcard as a function parameter
 parseQualifiedConstructorPatternSimple :: Array Token -> ParseResult Ast.Pattern
 parseQualifiedConstructorPatternSimple tokens =
-  case skipNewlines tokens of
-    ts | Just t <- Array.head ts
-       , t.tokenType == TokIdentifier
-       , isCapital t.value
-       , Just t2 <- Array.head (Array.drop 1 ts)
-       , t2.tokenType == TokOperator
-       , t2.value == "." -> do
-         -- We have "Identifier." - parse full qualified name
-         Tuple name rest <- parseQualifiedConstructorName ts
-         success (Ast.PatCon name []) rest
-    _ -> failure "Expected qualified constructor pattern"
+  let ts = skipNewlines tokens
+  in case Array.head ts of
+    Just t ->
+      if t.tokenType == TokIdentifier && isCapital t.value
+      then case Array.head (Array.drop 1 ts) of
+        Just t2 ->
+          if t2.tokenType == TokOperator && t2.value == "."
+          then do
+            -- We have "Identifier." - parse full qualified name
+            Tuple name rest <- parseQualifiedConstructorName ts
+            success (Ast.PatCon name []) rest
+          else failure "Expected qualified constructor pattern"
+        Nothing -> failure "Expected qualified constructor pattern"
+      else failure "Expected qualified constructor pattern"
+    Nothing -> failure "Expected qualified constructor pattern"
   where
     isCapital :: String -> Boolean
     isCapital s = case CU.charAt 0 s of
@@ -534,10 +628,13 @@ parseDollarExpression tokens = do
   Tuple left rest <- parseHashExpression tokens
   let rest' = skipNewlines rest
   case Array.head rest' of
-    Just t | t.tokenType == TokOperator, t.value == "$" -> do
-      let rest'' = skipNewlines (Array.drop 1 rest')
-      Tuple right rest''' <- parseDollarExpression rest''
-      success (Ast.ExprApp left right) rest'''
+    Just t ->
+      if t.tokenType == TokOperator && t.value == "$"
+      then do
+        let rest'' = skipNewlines (Array.drop 1 rest')
+        Tuple right rest''' <- parseDollarExpression rest''
+        success (Ast.ExprApp left right) rest'''
+      else success left rest
     _ -> success left rest
 
 -- | Parse hash operator (#) - left associative reverse application
@@ -551,20 +648,26 @@ parseHashExpressionRest :: Ast.Expr -> Array Token -> ParseResult Ast.Expr
 parseHashExpressionRest left tokens =
   let tokens' = skipNewlines tokens
   in case Array.head tokens' of
-    Just t | t.tokenType == TokOperator, t.value == "#" -> do
-      let rest = skipNewlines (Array.drop 1 tokens')
-      Tuple right rest' <- parseLogicalExpression rest
-      -- x # f becomes (f x)
-      parseHashExpressionRest (Ast.ExprApp right left) rest'
+    Just t ->
+      if t.tokenType == TokOperator && t.value == "#"
+      then do
+        let rest = skipNewlines (Array.drop 1 tokens')
+        Tuple right rest' <- parseLogicalExpression rest
+        -- x # f becomes (f x)
+        parseHashExpressionRest (Ast.ExprApp right left) rest'
+      else success left tokens
     _ -> success left tokens
 
 parseLogicalExpression :: Array Token -> ParseResult Ast.Expr
 parseLogicalExpression tokens = do
   Tuple left rest <- parseConsExpression tokens
   case Array.head rest of
-    Just t | t.tokenType == TokOperator, t.value == "&&" || t.value == "||" -> do
-      Tuple right rest' <- parseLogicalExpression (Array.drop 1 rest)
-      success (Ast.ExprBinOp t.value left right) rest'
+    Just t ->
+      if t.tokenType == TokOperator && (t.value == "&&" || t.value == "||")
+      then do
+        Tuple right rest' <- parseLogicalExpression (Array.drop 1 rest)
+        success (Ast.ExprBinOp t.value left right) rest'
+      else success left rest
     _ -> success left rest
 
 -- | Parse cons operator (:) - right associative, low precedence
@@ -572,9 +675,12 @@ parseConsExpression :: Array Token -> ParseResult Ast.Expr
 parseConsExpression tokens = do
   Tuple left rest <- parseComparisonExpression tokens
   case Array.head rest of
-    Just t | t.tokenType == TokOperator, t.value == ":" -> do
-      Tuple right rest' <- parseConsExpression (Array.drop 1 rest)
-      success (Ast.ExprBinOp ":" left right) rest'
+    Just t ->
+      if t.tokenType == TokOperator && t.value == ":"
+      then do
+        Tuple right rest' <- parseConsExpression (Array.drop 1 rest)
+        success (Ast.ExprBinOp ":" left right) rest'
+      else success left rest
     _ -> success left rest
 
 parseComparisonExpression :: Array Token -> ParseResult Ast.Expr
@@ -583,10 +689,13 @@ parseComparisonExpression tokens = do
   Tuple left rest <- parseAdditiveExpression tokens'
   let rest' = skipNewlines rest
   case Array.head rest' of
-    Just t | t.tokenType == TokOperator, isComparisonOp t.value -> do
-      let rest'' = skipNewlines (Array.drop 1 rest')
-      Tuple right rest''' <- parseComparisonExpression rest''
-      success (Ast.ExprBinOp t.value left right) rest'''
+    Just t ->
+      if t.tokenType == TokOperator && isComparisonOp t.value
+      then do
+        let rest'' = skipNewlines (Array.drop 1 rest')
+        Tuple right rest''' <- parseComparisonExpression rest''
+        success (Ast.ExprBinOp t.value left right) rest'''
+      else success left rest
     _ -> success left rest
   where
     isComparisonOp op = op == "==" || op == "!=" || op == "/=" || op == "<" || op == "<=" || op == ">" || op == ">="
@@ -595,9 +704,12 @@ parseAdditiveExpression :: Array Token -> ParseResult Ast.Expr
 parseAdditiveExpression tokens = do
   Tuple left rest <- parseMultiplicativeExpression tokens
   case Array.head rest of
-    Just t | t.tokenType == TokOperator, isAdditiveOp t.value -> do
-      Tuple right rest' <- parseAdditiveExpression (Array.drop 1 rest)
-      success (Ast.ExprBinOp t.value left right) rest'
+    Just t ->
+      if t.tokenType == TokOperator && isAdditiveOp t.value
+      then do
+        Tuple right rest' <- parseAdditiveExpression (Array.drop 1 rest)
+        success (Ast.ExprBinOp t.value left right) rest'
+      else success left rest
     _ -> success left rest
   where
     isAdditiveOp op = op == "+" || op == "-" || op == "++" || op == "<>"
@@ -606,9 +718,12 @@ parseMultiplicativeExpression :: Array Token -> ParseResult Ast.Expr
 parseMultiplicativeExpression tokens = do
   Tuple left rest <- parseBacktickExpression tokens
   case Array.head rest of
-    Just t | t.tokenType == TokOperator, isMultOp t.value -> do
-      Tuple right rest' <- parseMultiplicativeExpression (Array.drop 1 rest)
-      success (Ast.ExprBinOp t.value left right) rest'
+    Just t ->
+      if t.tokenType == TokOperator && isMultOp t.value
+      then do
+        Tuple right rest' <- parseMultiplicativeExpression (Array.drop 1 rest)
+        success (Ast.ExprBinOp t.value left right) rest'
+      else success left rest
     _ -> success left rest
   where
     isMultOp op = op == "*" || op == "/"
@@ -622,44 +737,59 @@ parseBacktickExpression tokens = do
   where
     parseBacktickRest left rest =
       case Array.head rest of
-        Just t | t.tokenType == TokOperator, t.value == "`" -> do
-          -- Parse the function name (may be qualified like Array.elem)
-          Tuple fn rest' <- parseBacktickFn (Array.drop 1 rest)
-          -- Expect closing backtick
-          case Array.head rest' of
-            Just t' | t'.tokenType == TokOperator, t'.value == "`" -> do
-              -- Parse right argument
-              Tuple right rest'' <- parseUnaryExpression (Array.drop 1 rest')
-              -- Result is fn applied to left then right
-              let result = Ast.ExprApp (Ast.ExprApp fn left) right
-              -- Check for more backtick operators
-              parseBacktickRest result rest''
-            _ -> failure "Expected closing backtick"
+        Just t ->
+          if t.tokenType == TokOperator && t.value == "`"
+          then do
+            -- Parse the function name (may be qualified like Array.elem)
+            Tuple fn rest' <- parseBacktickFn (Array.drop 1 rest)
+            -- Expect closing backtick
+            case Array.head rest' of
+              Just t' ->
+                if t'.tokenType == TokOperator && t'.value == "`"
+                then do
+                  -- Parse right argument
+                  Tuple right rest'' <- parseUnaryExpression (Array.drop 1 rest')
+                  -- Result is fn applied to left then right
+                  let result = Ast.ExprApp (Ast.ExprApp fn left) right
+                  -- Check for more backtick operators
+                  parseBacktickRest result rest''
+                else failure "Expected closing backtick"
+              _ -> failure "Expected closing backtick"
+          else success left rest
         _ -> success left rest
 
     -- Parse backtick function name (possibly qualified like Array.elem)
     parseBacktickFn toks =
       case Array.head toks of
-        Just t | t.tokenType == TokIdentifier ->
-          parseBacktickQualified t.value (Array.drop 1 toks)
+        Just t ->
+          if t.tokenType == TokIdentifier
+          then parseBacktickQualified t.value (Array.drop 1 toks)
+          else failure "Expected identifier in backtick expression"
         _ -> failure "Expected identifier in backtick expression"
 
     -- Build up qualified name as string, then create the appropriate expression
     parseBacktickQualified name toks =
       case Array.head toks of
-        Just t | t.tokenType == TokOperator, t.value == "." ->
-          case Array.head (Array.drop 1 toks) of
-            Just t' | t'.tokenType == TokIdentifier ->
-              parseBacktickQualified (name <> "." <> t'.value) (Array.drop 2 toks)
+        Just t ->
+          if t.tokenType == TokOperator && t.value == "."
+          then case Array.head (Array.drop 1 toks) of
+            Just t' ->
+              if t'.tokenType == TokIdentifier
+              then parseBacktickQualified (name <> "." <> t'.value) (Array.drop 2 toks)
+              else success (Ast.ExprVar name) toks
             _ -> success (Ast.ExprVar name) toks
+          else success (Ast.ExprVar name) toks
         _ -> success (Ast.ExprVar name) toks
 
 parseUnaryExpression :: Array Token -> ParseResult Ast.Expr
 parseUnaryExpression tokens =
   case Array.head tokens of
-    Just t | t.tokenType == TokOperator, isUnaryOp t.value -> do
-      Tuple expr rest <- parseUnaryExpression (Array.drop 1 tokens)
-      success (Ast.ExprUnaryOp t.value expr) rest
+    Just t ->
+      if t.tokenType == TokOperator && isUnaryOp t.value
+      then do
+        Tuple expr rest <- parseUnaryExpression (Array.drop 1 tokens)
+        success (Ast.ExprUnaryOp t.value expr) rest
+      else parseApplication tokens
     _ -> parseApplication tokens
   where
     isUnaryOp op = op == "-" || op == "+" || op == "!"
@@ -685,25 +815,33 @@ parseApplication tokens =
 maybeParseRecordUpdate :: Ast.Expr -> Array Token -> ParseResult Ast.Expr
 maybeParseRecordUpdate expr tokens =
   case Array.head tokens of
-    Just t | t.tokenType == TokDelimiter, t.value == "{" ->
-      -- Check if this is a record update (uses =) or literal (uses :)
-      case isRecordUpdate (Array.drop 1 tokens) of
-        true -> do
-          Tuple updates rest <- parseRecordUpdateFields (Array.drop 1 tokens)
-          Tuple _ rest' <- expectDelimiter rest "}"
-          -- Recursively check for chained updates
-          maybeParseRecordUpdate (Ast.ExprRecordUpdate expr updates) rest'
-        false -> success expr tokens
+    Just t ->
+      if t.tokenType == TokDelimiter && t.value == "{"
+      then
+        -- Check if this is a record update (uses =) or literal (uses :)
+        case isRecordUpdate (Array.drop 1 tokens) of
+          true -> do
+            Tuple updates rest <- parseRecordUpdateFields (Array.drop 1 tokens)
+            Tuple _ rest' <- expectDelimiter rest "}"
+            -- Recursively check for chained updates
+            maybeParseRecordUpdate (Ast.ExprRecordUpdate expr updates) rest'
+          false -> success expr tokens
+      else success expr tokens
     _ -> success expr tokens
   where
     -- Check if the brace content looks like record update (field =) rather than literal (field :)
     isRecordUpdate :: Array Token -> Boolean
     isRecordUpdate toks =
       case Array.head toks of
-        Just t1 | t1.tokenType == TokIdentifier ->
-          case Array.head (Array.drop 1 toks) of
-            Just t2 | t2.tokenType == TokOperator, t2.value == "=" -> true
+        Just t1 ->
+          if t1.tokenType == TokIdentifier
+          then case Array.head (Array.drop 1 toks) of
+            Just t2 ->
+              if t2.tokenType == TokOperator && t2.value == "="
+              then true
+              else false
             _ -> false
+          else false
         _ -> false
 
 parseRecordUpdateFields :: Array Token -> ParseResult (Array (Tuple String Ast.Expr))
@@ -720,22 +858,30 @@ parseRecordUpdateField tokens = do
 collectApplicationArgs :: Array Token -> Array Ast.Expr -> Int -> Tuple (Array Ast.Expr) (Array Token)
 collectApplicationArgs tokens acc base =
   case Array.head tokens of
-    Just t | t.tokenType == TokNewline ->
-      let rest = skipNewlines (Array.drop 1 tokens) in
-      case Array.head rest of
-        -- Don't continue if next looks like a binding (identifier = ...)
-        Just t' | looksLikeBinding rest -> Tuple acc rest
-        -- Continue if next token is a bracket/paren (likely continuation)
-        Just t' | t'.column > 1, isContinuationToken t' ->
-          case parseTerm rest of
-            Right (Tuple arg rest') -> collectApplicationArgs rest' (Array.snoc acc arg) base
-            Left _ -> Tuple acc rest
-        -- Continue on next line if column > base (more indented)
-        Just t' | t'.column > 1, t'.column > base ->
-          case parseTerm rest of
-            Right (Tuple arg rest') -> collectApplicationArgs rest' (Array.snoc acc arg) base
-            Left _ -> Tuple acc rest
-        _ -> Tuple acc rest
+    Just t ->
+      if t.tokenType == TokNewline
+      then
+        let rest = skipNewlines (Array.drop 1 tokens) in
+        case Array.head rest of
+          Just t' ->
+            -- Don't continue if next looks like a binding (identifier = ...)
+            if looksLikeBinding rest
+            then Tuple acc rest
+            -- Continue if next token is a bracket/paren (likely continuation)
+            else if t'.column > 1 && isContinuationToken t'
+            then case parseTerm rest of
+              Right (Tuple arg rest') -> collectApplicationArgs rest' (Array.snoc acc arg) base
+              Left _ -> Tuple acc rest
+            -- Continue on next line if column > base (more indented)
+            else if t'.column > 1 && t'.column > base
+            then case parseTerm rest of
+              Right (Tuple arg rest') -> collectApplicationArgs rest' (Array.snoc acc arg) base
+              Left _ -> Tuple acc rest
+            else Tuple acc rest
+          _ -> Tuple acc rest
+      else case parseTerm tokens of
+        Right (Tuple arg rest) -> collectApplicationArgs rest (Array.snoc acc arg) base
+        Left _ -> Tuple acc tokens
     _ -> case parseTerm tokens of
       Right (Tuple arg rest) -> collectApplicationArgs rest (Array.snoc acc arg) base
       Left _ -> Tuple acc tokens
@@ -744,13 +890,18 @@ collectApplicationArgs tokens acc base =
     looksLikeBinding :: Array Token -> Boolean
     looksLikeBinding toks =
       case Array.head toks of
-        Just t1 | t1.tokenType == TokIdentifier ->
-          case Array.head (skipNewlines (Array.drop 1 toks)) of
-            Just t2 | t2.tokenType == TokOperator, t2.value == "=" -> true
+        Just t1 ->
+          if t1.tokenType == TokIdentifier
+          then case Array.head (skipNewlines (Array.drop 1 toks)) of
+            Just t2 ->
+              if t2.tokenType == TokOperator && t2.value == "="
+              then true
+              else false
             _ -> false
-        -- Also check for record pattern binding: { ... } = expression
-        Just t1 | t1.tokenType == TokDelimiter, t1.value == "{" ->
-          looksLikeRecordBinding (Array.drop 1 toks)
+          -- Also check for record pattern binding: { ... } = expression
+          else if t1.tokenType == TokDelimiter && t1.value == "{"
+          then looksLikeRecordBinding (Array.drop 1 toks)
+          else false
         _ -> false
 
     -- Check if after '{' we have a record pattern followed by } and =
@@ -758,18 +909,24 @@ collectApplicationArgs tokens acc base =
     looksLikeRecordBinding toks = go toks 1
       where
         go :: Array Token -> Int -> Boolean
-        go tokens depth = case Array.head tokens of
+        go toks' depth = case Array.head toks' of
           Nothing -> false
-          Just t | t.tokenType == TokDelimiter, t.value == "{" -> go (Array.drop 1 tokens) (depth + 1)
-          Just t | t.tokenType == TokDelimiter, t.value == "}" ->
-            if depth == 1 then
-              -- Found matching }, check if followed by =
-              case Array.head (skipNewlines (Array.drop 1 tokens)) of
-                Just t2 | t2.tokenType == TokOperator, t2.value == "=" -> true
-                _ -> false
-            else
-              go (Array.drop 1 tokens) (depth - 1)
-          _ -> go (Array.drop 1 tokens) depth
+          Just t ->
+            if t.tokenType == TokDelimiter && t.value == "{"
+            then go (Array.drop 1 toks') (depth + 1)
+            else if t.tokenType == TokDelimiter && t.value == "}"
+            then
+              if depth == 1
+              then
+                -- Found matching }, check if followed by =
+                case Array.head (skipNewlines (Array.drop 1 toks')) of
+                  Just t2 ->
+                    if t2.tokenType == TokOperator && t2.value == "="
+                    then true
+                    else false
+                  _ -> false
+              else go (Array.drop 1 toks') (depth - 1)
+            else go (Array.drop 1 toks') depth
 
     -- Check if token indicates expression continuation
     isContinuationToken :: Token -> Boolean
@@ -794,21 +951,29 @@ parseExprLiteral tokens = do
 
 parseParenExpr :: Array Token -> ParseResult Ast.Expr
 parseParenExpr tokens =
-  case skipNewlines tokens of
-    ts | Just t <- Array.head ts, t.tokenType == TokDelimiter, t.value == "(" -> do
-      Tuple expr rest <- parseExpression (Array.drop 1 ts)
-      Tuple _ rest' <- expectDelimiter rest ")"
-      success (Ast.ExprParens expr) rest'
-    _ -> failure "Expected parenthesized expression"
+  let ts = skipNewlines tokens
+  in case Array.head ts of
+    Just t ->
+      if t.tokenType == TokDelimiter && t.value == "("
+      then do
+        Tuple expr rest <- parseExpression (Array.drop 1 ts)
+        Tuple _ rest' <- expectDelimiter rest ")"
+        success (Ast.ExprParens expr) rest'
+      else failure "Expected parenthesized expression"
+    Nothing -> failure "Expected parenthesized expression"
 
 parseRecordLiteral :: Array Token -> ParseResult Ast.Expr
 parseRecordLiteral tokens =
-  case skipNewlines tokens of
-    ts | Just t <- Array.head ts, t.tokenType == TokDelimiter, t.value == "{" -> do
-      Tuple fields rest <- parseSeparated parseRecordFieldExpr (\t -> expectDelimiter t ",") (Array.drop 1 ts)
-      Tuple _ rest' <- expectDelimiter rest "}"
-      success (Ast.ExprRecord fields) rest'
-    _ -> failure "Expected record literal"
+  let ts = skipNewlines tokens
+  in case Array.head ts of
+    Just t ->
+      if t.tokenType == TokDelimiter && t.value == "{"
+      then do
+        Tuple fields rest <- parseSeparated parseRecordFieldExpr (\tok -> expectDelimiter tok ",") (Array.drop 1 ts)
+        Tuple _ rest' <- expectDelimiter rest "}"
+        success (Ast.ExprRecord fields) rest'
+      else failure "Expected record literal"
+    Nothing -> failure "Expected record literal"
 
 parseRecordFieldExpr :: Array Token -> ParseResult (Tuple String Ast.Expr)
 parseRecordFieldExpr tokens = do
@@ -825,29 +990,39 @@ parseRecordFieldExpr tokens = do
 
 parseListLiteral :: Array Token -> ParseResult Ast.Expr
 parseListLiteral tokens =
-  case skipNewlines tokens of
-    ts | Just t <- Array.head ts, t.tokenType == TokDelimiter, t.value == "[" ->
-      case Array.head (Array.drop 1 ts) of
-        Just t' | t'.tokenType == TokDelimiter, t'.value == "]" ->
-          success (Ast.ExprList []) (Array.drop 2 ts)
-        _ -> do
-          Tuple elements rest <- parseSeparated parseExpression (\t -> expectDelimiter t ",") (Array.drop 1 ts)
-          Tuple _ rest' <- expectDelimiter rest "]"
-          success (Ast.ExprList elements) rest'
-    _ -> failure "Expected list literal"
+  let ts = skipNewlines tokens
+  in case Array.head ts of
+    Just t ->
+      if t.tokenType == TokDelimiter && t.value == "["
+      then
+        case Array.head (Array.drop 1 ts) of
+          Just t' ->
+            if t'.tokenType == TokDelimiter && t'.value == "]"
+            then success (Ast.ExprList []) (Array.drop 2 ts)
+            else do
+              Tuple elements rest <- parseSeparated parseExpression (\tok -> expectDelimiter tok ",") (Array.drop 1 ts)
+              Tuple _ rest' <- expectDelimiter rest "]"
+              success (Ast.ExprList elements) rest'
+          Nothing -> failure "Expected list literal"
+      else failure "Expected list literal"
+    Nothing -> failure "Expected list literal"
 
 parseTupleLiteral :: Array Token -> ParseResult Ast.Expr
 parseTupleLiteral tokens =
-  case skipNewlines tokens of
-    ts | Just t <- Array.head ts, t.tokenType == TokDelimiter, t.value == "(" -> do
-      Tuple elements rest <- parseSeparated parseExpression (\t -> expectDelimiter t ",") (Array.drop 1 ts)
-      Tuple _ rest' <- expectDelimiter rest ")"
-      case Array.length elements of
-        1 -> case Array.head elements of
-          Just e -> success e rest'
-          Nothing -> failure "Expected expression"
-        _ -> success (Ast.ExprTuple elements) rest'
-    _ -> failure "Expected tuple literal"
+  let ts = skipNewlines tokens
+  in case Array.head ts of
+    Just t ->
+      if t.tokenType == TokDelimiter && t.value == "("
+      then do
+        Tuple elements rest <- parseSeparated parseExpression (\tok -> expectDelimiter tok ",") (Array.drop 1 ts)
+        Tuple _ rest' <- expectDelimiter rest ")"
+        case Array.length elements of
+          1 -> case Array.head elements of
+            Just e -> success e rest'
+            Nothing -> failure "Expected expression"
+          _ -> success (Ast.ExprTuple elements) rest'
+      else failure "Expected tuple literal"
+    Nothing -> failure "Expected tuple literal"
 
 -- ------------------------------------------------------------
 -- Let expression
@@ -885,21 +1060,24 @@ parseFunctionStyleBinding tokens =
   -- Must start with a lowercase identifier (function name)
   -- Uppercase identifiers are constructors and should be pattern bindings
   case Array.head tokens of
-    Just t | t.tokenType == TokIdentifier, not (isUpperCase t.value) ->
-      let name = t.value
-          rest = Array.drop 1 tokens
-          Tuple params rest' = collectParams rest []
-      in -- If we found at least one parameter, it's a function binding
-          case Array.length params of
-            0 -> failure "Not a function binding"
-            _ -> case expectOperator rest' "=" of
-              Left err -> Left err
-              Right (Tuple _ rest'') -> case parseExpression rest'' of
+    Just t ->
+      if t.tokenType == TokIdentifier && not (isUpperCase t.value)
+      then
+        let name = t.value
+            rest = Array.drop 1 tokens
+            Tuple params rest' = collectParams rest []
+        in -- If we found at least one parameter, it's a function binding
+            case Array.length params of
+              0 -> failure "Not a function binding"
+              _ -> case expectOperator rest' "=" of
                 Left err -> Left err
-                Right (Tuple body rest''') ->
-                  -- Convert to: name = \params -> body
-                  let lambda = Ast.ExprLambda params body
-                  in success { pattern: Ast.PatVar name, value: lambda, typeAnn: Nothing } rest'''
+                Right (Tuple _ rest'') -> case parseExpression rest'' of
+                  Left err -> Left err
+                  Right (Tuple body rest''') ->
+                    -- Convert to: name = \params -> body
+                    let lambda = Ast.ExprLambda params body
+                    in success { pattern: Ast.PatVar name, value: lambda, typeAnn: Nothing } rest'''
+      else failure "Not a function binding"
     _ -> failure "Not a function binding"
   where
     isUpperCase s = case CU.charAt 0 s of
@@ -911,12 +1089,17 @@ parseFunctionStyleBinding tokens =
     collectParams toks acc =
       let toks' = skipNewlines toks
       in case Array.head toks' of
-        -- Stop at = sign
-        Just tok | tok.tokenType == TokOperator, tok.value == "=" ->
-          Tuple (Array.reverse acc) toks'
+        Just tok ->
+          -- Stop at = sign
+          if tok.tokenType == TokOperator && tok.value == "="
+          then Tuple (Array.reverse acc) toks'
+          -- Try to parse a simple pattern (var, wildcard, literal, or parens)
+          else case parseSimplePattern toks' of
+            Right (Tuple pat rest) -> collectParams rest (Array.cons pat acc)
+            Left _ -> Tuple (Array.reverse acc) toks'
         -- Try to parse a simple pattern (var, wildcard, literal, or parens)
         _ -> case parseSimplePattern toks' of
-          Right (Tuple pat rest) -> collectParams rest (pat : acc)
+          Right (Tuple pat rest) -> collectParams rest (Array.cons pat acc)
           Left _ -> Tuple (Array.reverse acc) toks'
 
 -- ------------------------------------------------------------
@@ -957,52 +1140,67 @@ parseCaseClausesAt :: Array Token -> Int -> Array Ast.CaseClause -> ParseResult 
 parseCaseClausesAt tokens indent acc =
   let tokens' = skipNewlines tokens in
   case Array.head tokens' of
-    Nothing | Array.length acc > 0 -> success acc tokens'
-    Nothing -> failure "Expected case clause"
-    -- Check if this is an additional guard for the previous clause (starts with |)
-    Just t | t.tokenType == TokOperator, t.value == "|", Array.length acc > 0 ->
-      -- Get the pattern from the previous clause and parse this as a continuation
-      case Array.last acc of
-        Just prevClause -> parseAdditionalGuard tokens' prevClause.pattern indent acc
-        Nothing -> failure "Internal error: no previous clause"
-    Just t | t.column /= indent, Array.length acc > 0 -> success acc tokens'
-    Just t | t.column /= indent -> failure "Case clause at wrong indentation"
-    _ -> case parseCaseClause tokens' of
-      Right (Tuple clause rest) ->
-        -- Check if remaining tokens start with | (additional guards)
-        let rest' = skipNewlines rest in
-        case Array.head rest' of
-          Just t | t.tokenType == TokOperator, t.value == "|" ->
-            parseAdditionalGuard rest' clause.pattern indent (Array.snoc acc clause)
-          _ -> parseCaseClausesAt rest indent (Array.snoc acc clause)
-      Left _ | Array.length acc > 0 -> success acc tokens'
-      Left err -> Left err
+    Nothing ->
+      if Array.length acc > 0
+      then success acc tokens'
+      else failure "Expected case clause"
+    Just t ->
+      -- Check if this is an additional guard for the previous clause (starts with |)
+      if t.tokenType == TokOperator && t.value == "|" && Array.length acc > 0
+      then
+        -- Get the pattern from the previous clause and parse this as a continuation
+        case Array.last acc of
+          Just prevClause -> parseAdditionalGuard tokens' prevClause.pattern indent acc
+          Nothing -> failure "Internal error: no previous clause"
+      else if t.column /= indent && Array.length acc > 0
+      then success acc tokens'
+      else if t.column /= indent
+      then failure "Case clause at wrong indentation"
+      else case parseCaseClause tokens' of
+        Right (Tuple clause rest) ->
+          -- Check if remaining tokens start with | (additional guards)
+          let rest' = skipNewlines rest in
+          case Array.head rest' of
+            Just t2 ->
+              if t2.tokenType == TokOperator && t2.value == "|"
+              then parseAdditionalGuard rest' clause.pattern indent (Array.snoc acc clause)
+              else parseCaseClausesAt rest indent (Array.snoc acc clause)
+            _ -> parseCaseClausesAt rest indent (Array.snoc acc clause)
+        Left _ ->
+          if Array.length acc > 0
+          then success acc tokens'
+          else failure "Expected case clause"
   where
     -- Parse additional guards for the same pattern: | guard -> body
     parseAdditionalGuard :: Array Token -> Ast.Pattern -> Int -> Array Ast.CaseClause -> ParseResult (Array Ast.CaseClause)
     parseAdditionalGuard toks pat clauseIndent clauseAcc =
       let toks' = skipNewlines toks in
       case Array.head toks' of
-        Just t | t.tokenType == TokOperator, t.value == "|" -> do
-          case parseGuardExpression (Array.drop 1 toks') of
-            Right (Tuple guard afterGuard) -> do
-              Tuple _ afterArrow <- expectOperator afterGuard "->"
-              -- Determine the body extent based on the clause indent
-              case Array.head (skipNewlines afterArrow) of
-                Just firstBodyTok -> do
-                  let Tuple bodyTokens rest = takeBody afterArrow [] firstBodyTok.column
-                  Tuple body remaining <- parseExpression bodyTokens
-                  let clause = { pattern: pat, guard: Just guard, body: body }
-                  let newAcc = Array.snoc clauseAcc clause
-                  -- Check for more guards in `rest` (from takeBody), not `remaining` (from parseExpression)
-                  -- The additional guards are in `rest`, since bodyTokens only contains the body expression
-                  let restAfterBody = skipNewlines rest
-                  case Array.head restAfterBody of
-                    Just t' | t'.tokenType == TokOperator, t'.value == "|" ->
-                      parseAdditionalGuard restAfterBody pat clauseIndent newAcc
-                    _ -> parseCaseClausesAt rest clauseIndent newAcc
-                Nothing -> failure "Expected body after ->"
-            Left err -> Left err
+        Just t ->
+          if t.tokenType == TokOperator && t.value == "|"
+          then do
+            case parseGuardExpression (Array.drop 1 toks') of
+              Right (Tuple guard afterGuard) -> do
+                Tuple _ afterArrow <- expectOperator afterGuard "->"
+                -- Determine the body extent based on the clause indent
+                case Array.head (skipNewlines afterArrow) of
+                  Just firstBodyTok -> do
+                    let Tuple bodyTokens rest = takeBody afterArrow [] firstBodyTok.column
+                    Tuple body remaining <- parseExpression bodyTokens
+                    let clause = { pattern: pat, guard: Just guard, body: body }
+                    let newAcc = Array.snoc clauseAcc clause
+                    -- Check for more guards in `rest` (from takeBody), not `remaining` (from parseExpression)
+                    -- The additional guards are in `rest`, since bodyTokens only contains the body expression
+                    let restAfterBody = skipNewlines rest
+                    case Array.head restAfterBody of
+                      Just t' ->
+                        if t'.tokenType == TokOperator && t'.value == "|"
+                        then parseAdditionalGuard restAfterBody pat clauseIndent newAcc
+                        else parseCaseClausesAt rest clauseIndent newAcc
+                      _ -> parseCaseClausesAt rest clauseIndent newAcc
+                  Nothing -> failure "Expected body after ->"
+              Left err -> Left err
+          else parseCaseClausesAt toks clauseIndent clauseAcc
         _ -> parseCaseClausesAt toks clauseIndent clauseAcc
 
 -- | Parse one case clause. If there are multiple guarded alternatives (e.g., | guard1 -> body1 | guard2 -> body2),
@@ -1033,17 +1231,22 @@ parseCaseClause tokens = do
     hasMoreGuards :: Array Token -> Boolean
     hasMoreGuards toks =
       case Array.head (skipNewlines toks) of
-        Just t | t.tokenType == TokOperator, t.value == "|" -> true
+        Just t ->
+          if t.tokenType == TokOperator && t.value == "|"
+          then true
+          else false
         _ -> false
 
 maybeParseGuard :: Array Token -> Tuple (Maybe Ast.Expr) (Array Token)
 maybeParseGuard tokens =
   let tokens' = skipNewlines tokens in
   case Array.head tokens' of
-    Just t | t.tokenType == TokOperator, t.value == "|" ->
-      case parseGuardExpression (Array.drop 1 tokens') of
+    Just t ->
+      if t.tokenType == TokOperator && t.value == "|"
+      then case parseGuardExpression (Array.drop 1 tokens') of
         Right (Tuple guard rest) -> Tuple (Just guard) rest
         Left _ -> Tuple Nothing tokens
+      else Tuple Nothing tokens
     _ -> Tuple Nothing tokens
 
 -- | Parse guard expressions which can include pattern binds (pat <- expr) and boolean guards
@@ -1068,8 +1271,10 @@ parseGuardParts tokens acc = do
   Tuple g rest <- parseGuardPart tokens
   let rest' = skipNewlines rest
   case Array.head rest' of
-    Just t | t.tokenType == TokDelimiter, t.value == "," ->
-      parseGuardParts (Array.drop 1 rest') (Array.snoc acc g)
+    Just t ->
+      if t.tokenType == TokDelimiter && t.value == ","
+      then parseGuardParts (Array.drop 1 rest') (Array.snoc acc g)
+      else success (Array.snoc acc g) rest'
     _ -> success (Array.snoc acc g) rest'
 
 parseGuardPart :: Array Token -> ParseResult Ast.Expr
@@ -1086,11 +1291,14 @@ parseGuardPart tokens = do
       Tuple pat rest <- parsePattern toks
       let rest' = skipNewlines rest
       case Array.head rest' of
-        Just t | t.tokenType == TokOperator, t.value == "<-" -> do
-          Tuple expr rest'' <- parseLogicalExpression (Array.drop 1 rest')  -- Use logical here too
-          -- Convert pattern bind to expression for AST compatibility
-          -- This is a simplification - ideally AST would have a GuardBind constructor
-          success (Ast.ExprBinOp "<-" (patternToExpr pat) expr) rest''
+        Just t ->
+          if t.tokenType == TokOperator && t.value == "<-"
+          then do
+            Tuple expr rest'' <- parseLogicalExpression (Array.drop 1 rest')  -- Use logical here too
+            -- Convert pattern bind to expression for AST compatibility
+            -- This is a simplification - ideally AST would have a GuardBind constructor
+            success (Ast.ExprBinOp "<-" (patternToExpr pat) expr) rest''
+          else failure "Not a pattern bind"
         _ -> failure "Not a pattern bind"
 
     patternToExpr :: Ast.Pattern -> Ast.Expr
@@ -1108,30 +1316,38 @@ takeBody :: Array Token -> Array Token -> Int -> Tuple (Array Token) (Array Toke
 takeBody tokens acc indent =
   case Array.head tokens of
     Nothing -> Tuple (Array.reverse acc) []
-    Just t | t.tokenType == TokNewline ->
-      let rest = skipNewlines (Array.drop 1 tokens) in
-      case Array.head rest of
-        Just t' | t'.column < indent -> Tuple (Array.reverse acc) rest
-        Just t' | t'.column == indent, clauseStart rest -> Tuple (Array.reverse acc) rest
-        -- Check for additional guard (| guard -> ...) - stop before it
-        Just t' | t'.tokenType == TokOperator, t'.value == "|", guardStart rest ->
-          Tuple (Array.reverse acc) rest
-        -- Continue collecting body tokens on next line (indented continuation)
-        -- Include a newline token so nested case expressions can parse correctly
-        _ -> takeBody rest (Array.cons t acc) indent
-    Just t -> takeBody (Array.drop 1 tokens) (Array.cons t acc) indent
+    Just t ->
+      if t.tokenType == TokNewline
+      then
+        let rest = skipNewlines (Array.drop 1 tokens) in
+        case Array.head rest of
+          Just t' ->
+            if t'.column < indent
+            then Tuple (Array.reverse acc) rest
+            else if t'.column == indent && clauseStart rest
+            then Tuple (Array.reverse acc) rest
+            -- Check for additional guard (| guard -> ...) - stop before it
+            else if t'.tokenType == TokOperator && t'.value == "|" && guardStart rest
+            then Tuple (Array.reverse acc) rest
+            -- Continue collecting body tokens on next line (indented continuation)
+            -- Include a newline token so nested case expressions can parse correctly
+            else takeBody rest (Array.cons t acc) indent
+          _ -> takeBody rest (Array.cons t acc) indent
+      else takeBody (Array.drop 1 tokens) (Array.cons t acc) indent
 
 -- | Check if tokens start with a guard: | expr ->
 guardStart :: Array Token -> Boolean
 guardStart tokens =
   case Array.head tokens of
-    Just t | t.tokenType == TokOperator, t.value == "|" ->
-      case parseGuardExpression (Array.drop 1 tokens) of
+    Just t ->
+      if t.tokenType == TokOperator && t.value == "|"
+      then case parseGuardExpression (Array.drop 1 tokens) of
         Right (Tuple _ rest) ->
           case expectOperator rest "->" of
             Right _ -> true
             Left _ -> false
         Left _ -> false
+      else false
     _ -> false
 
 clauseStart :: Array Token -> Boolean
@@ -1153,20 +1369,25 @@ clauseStart tokens =
     maybeParseGuardIndented :: Int -> Array Token -> Tuple (Maybe Ast.Expr) (Array Token)
     maybeParseGuardIndented patCol toks =
       case Array.head toks of
-        -- Guard on same line (no newline)
-        Just t | t.tokenType == TokOperator, t.value == "|" ->
-          case parseGuardExpression (Array.drop 1 toks) of
+        Just t ->
+          -- Guard on same line (no newline)
+          if t.tokenType == TokOperator && t.value == "|"
+          then case parseGuardExpression (Array.drop 1 toks) of
             Right (Tuple guard rest) -> Tuple (Just guard) rest
             Left _ -> Tuple Nothing toks
-        -- Newline - check if next line has a guard that's MORE indented
-        Just t | t.tokenType == TokNewline ->
-          let toks' = skipNewlines toks in
-          case Array.head toks' of
-            Just t' | t'.tokenType == TokOperator, t'.value == "|", t'.column > patCol ->
-              case parseGuardExpression (Array.drop 1 toks') of
-                Right (Tuple guard rest) -> Tuple (Just guard) rest
-                Left _ -> Tuple Nothing toks
-            _ -> Tuple Nothing toks
+          -- Newline - check if next line has a guard that's MORE indented
+          else if t.tokenType == TokNewline
+          then
+            let toks' = skipNewlines toks in
+            case Array.head toks' of
+              Just t' ->
+                if t'.tokenType == TokOperator && t'.value == "|" && t'.column > patCol
+                then case parseGuardExpression (Array.drop 1 toks') of
+                  Right (Tuple guard rest) -> Tuple (Just guard) rest
+                  Left _ -> Tuple Nothing toks
+                else Tuple Nothing toks
+              _ -> Tuple Nothing toks
+          else Tuple Nothing toks
         _ -> Tuple Nothing toks
 
 -- ------------------------------------------------------------
@@ -1191,17 +1412,23 @@ parseDoStatementsAt tokens indent acc =
   let tokens' = skipNewlines tokens in
   case Array.head tokens' of
     Nothing -> success acc tokens'
-    Just t | t.column < indent -> success acc tokens'  -- Less indented = end of do block
-    Just t | t.column > indent, Array.length acc == 0 ->
-      -- First statement can be more indented (continuation)
-      case parseDoStatement tokens' of
+    Just t ->
+      if t.column < indent
+      then success acc tokens'  -- Less indented = end of do block
+      else if t.column > indent && Array.length acc == 0
+      then
+        -- First statement can be more indented (continuation)
+        case parseDoStatement tokens' of
+          Right (Tuple stmt rest) -> parseDoStatementsAt rest indent (Array.snoc acc stmt)
+          Left _ -> success acc tokens'
+      else if t.column /= indent && Array.length acc > 0
+      then success acc tokens'  -- Different indent = end
+      else case parseDoStatement tokens' of
         Right (Tuple stmt rest) -> parseDoStatementsAt rest indent (Array.snoc acc stmt)
-        Left _ -> success acc tokens'
-    Just t | t.column /= indent, Array.length acc > 0 -> success acc tokens'  -- Different indent = end
-    _ -> case parseDoStatement tokens' of
-      Right (Tuple stmt rest) -> parseDoStatementsAt rest indent (Array.snoc acc stmt)
-      Left _ | Array.length acc > 0 -> success acc tokens'
-      Left err -> Left err
+        Left _ ->
+          if Array.length acc > 0
+          then success acc tokens'
+          else failure "Expected do statement"
 
 parseDoStatement :: Array Token -> ParseResult Ast.DoStatement
 parseDoStatement tokens =
@@ -1301,19 +1528,25 @@ parseImport tokens = do
 parseImportAlias :: Array Token -> Tuple (Maybe String) (Array Token)
 parseImportAlias tokens =
   case Array.head tokens of
-    Just t | t.tokenType == TokIdentifier, t.value == "as" ->
-      case parseIdentifierName (Array.drop 1 tokens) of
+    Just t ->
+      if t.tokenType == TokIdentifier && t.value == "as"
+      then case parseIdentifierName (Array.drop 1 tokens) of
         Right (Tuple name rest) -> Tuple (Just name) rest
         Left _ -> Tuple Nothing tokens
+      else Tuple Nothing tokens
     _ -> Tuple Nothing tokens
 
 parseImportSelectors :: Array Token -> ParseResult (Tuple (Array Ast.ImportItem) Boolean)
 parseImportSelectors tokens =
   case Array.head tokens of
-    Just t | t.tokenType == TokIdentifier, t.value == "hiding" ->
-      case parseParenImportList (Array.drop 1 tokens) of
+    Just t ->
+      if t.tokenType == TokIdentifier && t.value == "hiding"
+      then case parseParenImportList (Array.drop 1 tokens) of
         Right (Tuple items rest) -> success (Tuple items true) rest
         Left err -> Left err
+      else case parseParenImportList tokens of
+        Right (Tuple items rest) -> success (Tuple items false) rest
+        Left _ -> success (Tuple [] false) tokens
     _ -> case parseParenImportList tokens of
       Right (Tuple items rest) -> success (Tuple items false) rest
       Left _ -> success (Tuple [] false) tokens
@@ -1321,42 +1554,60 @@ parseImportSelectors tokens =
 parseParenImportList :: Array Token -> ParseResult (Array Ast.ImportItem)
 parseParenImportList tokens =
   case Array.head tokens of
-    Just t | t.tokenType == TokDelimiter, t.value == "(" -> do
-      Tuple items rest <- parseSeparated parseImportItem (\t -> expectDelimiter t ",") (Array.drop 1 tokens)
-      Tuple _ rest' <- expectDelimiter rest ")"
-      success items rest'
+    Just t ->
+      if t.tokenType == TokDelimiter && t.value == "("
+      then do
+        Tuple items rest <- parseSeparated parseImportItem (\tok -> expectDelimiter tok ",") (Array.drop 1 tokens)
+        Tuple _ rest' <- expectDelimiter rest ")"
+        success items rest'
+      else failure "No paren import list"
     _ -> failure "No paren import list"
 
 parseImportItem :: Array Token -> ParseResult Ast.ImportItem
 parseImportItem tokens =
   -- Try parsing an operator in parens like (:) or (<>)
   case Array.head tokens of
-    Just t | t.tokenType == TokDelimiter, t.value == "(" ->
-      case Array.head (Array.drop 1 tokens) of
-        Just opTok | opTok.tokenType == TokOperator ->
-          case Array.head (Array.drop 2 tokens) of
-            Just closeTok | closeTok.tokenType == TokDelimiter, closeTok.value == ")" ->
-              success (Ast.ImportValue ("(" <> opTok.value <> ")")) (Array.drop 3 tokens)
+    Just t ->
+      if t.tokenType == TokDelimiter && t.value == "("
+      then case Array.head (Array.drop 1 tokens) of
+        Just opTok ->
+          if opTok.tokenType == TokOperator
+          then case Array.head (Array.drop 2 tokens) of
+            Just closeTok ->
+              if closeTok.tokenType == TokDelimiter && closeTok.value == ")"
+              then success (Ast.ImportValue ("(" <> opTok.value <> ")")) (Array.drop 3 tokens)
+              else parseNormalImportItem tokens
             _ -> parseNormalImportItem tokens
+          else parseNormalImportItem tokens
         _ -> parseNormalImportItem tokens
+      else parseNormalImportItem tokens
     _ -> parseNormalImportItem tokens
   where
     parseNormalImportItem toks = do
       Tuple name rest <- parseIdentifierName toks
       case Array.head rest of
-        Just t | t.tokenType == TokDelimiter, t.value == "(" -> do
-          Tuple spec rest' <- parseImportSpec (Array.drop 1 rest)
-          success (Ast.ImportType name spec) rest'
+        Just t ->
+          if t.tokenType == TokDelimiter && t.value == "("
+          then do
+            Tuple spec rest' <- parseImportSpec (Array.drop 1 rest)
+            success (Ast.ImportType name spec) rest'
+          else success (Ast.ImportValue name) rest
         _ -> success (Ast.ImportValue name) rest
 
 parseImportSpec :: Array Token -> ParseResult Ast.ImportSpec
 parseImportSpec tokens =
   case Array.head tokens of
-    Just t | t.tokenType == TokOperator, t.value == ".." -> do
-      Tuple _ rest <- expectDelimiter (Array.drop 1 tokens) ")"
-      success Ast.ImportAll rest
+    Just t ->
+      if t.tokenType == TokOperator && t.value == ".."
+      then do
+        Tuple _ rest <- expectDelimiter (Array.drop 1 tokens) ")"
+        success Ast.ImportAll rest
+      else do
+        Tuple names rest <- parseSeparated parseIdentifierName (\tok -> expectDelimiter tok ",") tokens
+        Tuple _ rest' <- expectDelimiter rest ")"
+        success (Ast.ImportSome names) rest'
     _ -> do
-      Tuple names rest <- parseSeparated parseIdentifierName (\t -> expectDelimiter t ",") tokens
+      Tuple names rest <- parseSeparated parseIdentifierName (\tok -> expectDelimiter tok ",") tokens
       Tuple _ rest' <- expectDelimiter rest ")"
       success (Ast.ImportSome names) rest'
 
@@ -1394,9 +1645,14 @@ parseDataConstructor tokens = do
   Tuple name rest <- parseIdentifierName tokens
   let rest' = skipNewlines rest
   case Array.head rest' of
-    Just t | t.tokenType == TokDelimiter, t.value == "{" -> do
-      Tuple fields rest'' <- parseBracedRecordFields rest'
-      success { name: name, fields: map fieldToDataField fields, isRecord: true } rest''
+    Just t ->
+      if t.tokenType == TokDelimiter && t.value == "{"
+      then do
+        Tuple fields rest'' <- parseBracedRecordFields rest'
+        success { name: name, fields: map fieldToDataField fields, isRecord: true } rest''
+      else do
+        Tuple fieldTypes rest'' <- parseMany parseTypeAtom rest'
+        success { name: name, fields: map typeToDataField fieldTypes, isRecord: false } rest''
     _ -> do
       Tuple fieldTypes rest'' <- parseMany parseTypeAtom rest'
       success { name: name, fields: map typeToDataField fieldTypes, isRecord: false } rest''
@@ -1410,10 +1666,13 @@ parseDataConstructor tokens = do
 parseBracedRecordFields :: Array Token -> ParseResult (Array { label :: String, ty :: Ast.TypeExpr })
 parseBracedRecordFields tokens =
   case Array.head tokens of
-    Just t | t.tokenType == TokDelimiter, t.value == "{" -> do
-      Tuple fields rest <- parseSeparated parseRecordConstructorField (\t -> expectDelimiter t ",") (Array.drop 1 tokens)
-      Tuple _ rest' <- expectDelimiter rest "}"
-      success fields rest'
+    Just t ->
+      if t.tokenType == TokDelimiter && t.value == "{"
+      then do
+        Tuple fields rest <- parseSeparated parseRecordConstructorField (\tok -> expectDelimiter tok ",") (Array.drop 1 tokens)
+        Tuple _ rest' <- expectDelimiter rest "}"
+        success fields rest'
+      else failure "Expected '{' for record constructor"
     _ -> failure "Expected '{' for record constructor"
 
 parseRecordConstructorField :: Array Token -> ParseResult { label :: String, ty :: Ast.TypeExpr }
@@ -1443,9 +1702,12 @@ parseTypeClass tokens = do
   Tuple vars rest4 <- parseMany parseIdentifierName rest'''
   let rest5 = skipNewlines rest4
   case Array.head rest5 of
-    Just t | t.tokenType == TokKeyword, t.value == "where" -> do
-      Tuple methods rest6 <- parseMany parseTypeSignature (Array.drop 1 rest5)
-      success (Ast.DeclTypeClass { name: name, typeVars: vars, methods: methods, kind: kind }) rest6
+    Just t ->
+      if t.tokenType == TokKeyword && t.value == "where"
+      then do
+        Tuple methods rest6 <- parseMany parseTypeSignature (Array.drop 1 rest5)
+        success (Ast.DeclTypeClass { name: name, typeVars: vars, methods: methods, kind: kind }) rest6
+      else success (Ast.DeclTypeClass { name: name, typeVars: vars, methods: [], kind: kind }) rest5
     _ -> success (Ast.DeclTypeClass { name: name, typeVars: vars, methods: [], kind: kind }) rest5
 
 skipSuperclassConstraints :: Array Token -> Tuple (Array Token) (Array Token)
@@ -1453,7 +1715,10 @@ skipSuperclassConstraints tokens =
   let tokens' = skipNewlines tokens
       { init: before, rest: after } = Array.span (\t -> not (t.tokenType == TokOperator && t.value == "<=")) tokens'
   in case Array.head after of
-    Just t | t.tokenType == TokOperator, t.value == "<=" -> Tuple (Array.drop 1 after) before
+    Just t ->
+      if t.tokenType == TokOperator && t.value == "<="
+      then Tuple (Array.drop 1 after) before
+      else Tuple tokens' []
     _ -> Tuple tokens' []
 
 maybeParseClassKind :: Array Token -> Tuple (Array Token) (Maybe String)
@@ -1467,40 +1732,48 @@ maybeParseClassKind tokens =
 parseTypeClassInstance :: Array Token -> ParseResult Ast.Declaration
 parseTypeClassInstance tokens = do
   let Tuple tokens' derived = case Array.head tokens of
-        Just t | t.tokenType == TokKeyword, t.value == "derive" -> Tuple (Array.drop 1 tokens) true
+        Just t ->
+          if t.tokenType == TokKeyword && t.value == "derive"
+          then Tuple (Array.drop 1 tokens) true
+          else Tuple tokens false
         _ -> Tuple tokens false
   Tuple _ rest <- expectKeyword tokens' "instance"
   let rest' = dropNewlines rest
   -- Try named instance
   case Array.head rest' of
-    Just t | t.tokenType == TokIdentifier ->
-      case Array.head (Array.drop 1 rest') of
-        Just t' | t'.tokenType == TokOperator, t'.value == "::" -> do
-          let rest'' = dropInstanceConstraints (Array.drop 2 rest')
-          Tuple ty rest''' <- parseType rest''
-          -- For derive instance, 'where' is optional (no methods)
-          case expectKeyword rest''' "where" of
-            Right (Tuple _ rest4) -> do
-              Tuple methods rest5 <- parseMany parseFunctionDeclarationRaw rest4
-              let className = extractClassName ty
-              success (Ast.DeclTypeClassInstance
-                { className: className
-                , ty: ty
-                , methods: methods
-                , derived: derived
-                }) rest5
-            Left _ ->
-              if derived then do
+    Just t ->
+      if t.tokenType == TokIdentifier
+      then case Array.head (Array.drop 1 rest') of
+        Just t' ->
+          if t'.tokenType == TokOperator && t'.value == "::"
+          then do
+            let rest'' = dropInstanceConstraints (Array.drop 2 rest')
+            Tuple ty rest''' <- parseType rest''
+            -- For derive instance, 'where' is optional (no methods)
+            case expectKeyword rest''' "where" of
+              Right (Tuple _ rest4) -> do
+                Tuple methods rest5 <- parseMany parseFunctionDeclarationRaw rest4
                 let className = extractClassName ty
                 success (Ast.DeclTypeClassInstance
                   { className: className
                   , ty: ty
-                  , methods: []
+                  , methods: methods
                   , derived: derived
-                  }) rest'''
-              else
-                failure "Expected 'where' clause for non-derived instance"
+                  }) rest5
+              Left _ ->
+                if derived then do
+                  let className = extractClassName ty
+                  success (Ast.DeclTypeClassInstance
+                    { className: className
+                    , ty: ty
+                    , methods: []
+                    , derived: derived
+                    }) rest'''
+                else
+                  failure "Expected 'where' clause for non-derived instance"
+          else parseUnnamedInstance rest' derived
         _ -> parseUnnamedInstance rest' derived
+      else parseUnnamedInstance rest' derived
     _ -> parseUnnamedInstance rest' derived
   where
     parseUnnamedInstance rest isDerived = do
@@ -1543,32 +1816,37 @@ dropInstanceConstraints tokens =
       { init: before, rest: after } = Array.span (\t -> not (t.tokenType == TokOperator && t.value == "=>")) tokens'
   in case Array.head after of
     -- Only skip if we actually found => at a reasonable position (within first ~20 tokens)
-    Just t | t.tokenType == TokOperator, t.value == "=>", Array.length before < 20 ->
-      skipNewlines (Array.drop 1 after)
+    Just t ->
+      if t.tokenType == TokOperator && t.value == "=>" && Array.length before < 20
+      then skipNewlines (Array.drop 1 after)
+      else tokens'
     _ -> tokens'
 
 parseFunctionWithTypeSignature :: Array Token -> ParseResult Ast.Declaration
 parseFunctionWithTypeSignature tokens = do
   let tokens' = dropNewlines tokens
   case Array.head tokens' of
-    Just t | t.tokenType == TokIdentifier -> do
-      let name = t.value
-      case expectOperator (Array.drop 1 tokens') "::" of
-        Right (Tuple _ rest) -> do
-          let Tuple typeTokens rest' = splitTypeAndRest rest name
-          Tuple ty _ <- parseType (stripNewlines typeTokens)
-          Tuple fun rest'' <- parseFunctionDeclarationRaw rest'
-          if fun.name == name then
-            success (Ast.DeclFunction
-              { name: fun.name
-              , parameters: fun.parameters
-              , body: fun.body
-              , guards: fun.guards
-              , typeSignature: Just { name: name, typeVars: [], constraints: [], ty: ty }
-              }) rest''
-          else
-            failure "Function name mismatch"
-        Left _ -> failure "Expected '::'"
+    Just t ->
+      if t.tokenType == TokIdentifier
+      then do
+        let name = t.value
+        case expectOperator (Array.drop 1 tokens') "::" of
+          Right (Tuple _ rest) -> do
+            let Tuple typeTokens rest' = splitTypeAndRest rest name
+            Tuple ty _ <- parseType (stripNewlines typeTokens)
+            Tuple fun rest'' <- parseFunctionDeclarationRaw rest'
+            if fun.name == name then
+              success (Ast.DeclFunction
+                { name: fun.name
+                , parameters: fun.parameters
+                , body: fun.body
+                , guards: fun.guards
+                , typeSignature: Just { name: name, typeVars: [], constraints: [], ty: ty }
+                }) rest''
+            else
+              failure "Function name mismatch"
+          Left _ -> failure "Expected '::'"
+      else failure "Expected identifier"
     _ -> failure "Expected identifier"
 
 -- | Split tokens into type signature tokens and the rest (starting from function definition)
@@ -1580,16 +1858,15 @@ splitTypeAndRest tokens name = go tokens []
     go :: Array Token -> Array Token -> Tuple (Array Token) (Array Token)
     go toks acc = case Array.head toks of
       Nothing -> Tuple acc toks
-      Just t
+      Just t ->
         -- Found the function name at column 1 (start of line definition)
-        | t.tokenType == TokIdentifier, t.value == name, t.column == 1 ->
-            Tuple acc toks
+        if t.tokenType == TokIdentifier && t.value == name && t.column == 1
+        then Tuple acc toks
         -- Skip newlines but don't include them in type tokens
-        | t.tokenType == TokNewline ->
-            go (Array.drop 1 toks) acc
+        else if t.tokenType == TokNewline
+        then go (Array.drop 1 toks) acc
         -- Accumulate other tokens as part of the type
-        | otherwise ->
-            go (Array.drop 1 toks) (Array.snoc acc t)
+        else go (Array.drop 1 toks) (Array.snoc acc t)
 
 parseFunctionDeclaration :: Array Token -> ParseResult Ast.Declaration
 parseFunctionDeclaration tokens = do
@@ -1603,9 +1880,20 @@ parseFunctionDeclarationRaw tokens = do
   -- Check if next is = (simple) or | (guards)
   let rest'' = skipNewlines rest'
   case Array.head rest'' of
-    Just tok | tok.tokenType == TokOperator, tok.value == "|" ->
-      -- Has guards
-      parseGuardedFunction name params rest''
+    Just tok ->
+      if tok.tokenType == TokOperator && tok.value == "|"
+      then
+        -- Has guards
+        parseGuardedFunction name params rest''
+      else do
+        -- Simple function with =
+        Tuple _ rest''' <- expectOperator rest' "="
+        case Array.head rest''' of
+          Just firstTok -> do
+            Tuple body rest4 <- parseExpression rest'''
+            Tuple body' rest5 <- maybeParseWhere rest4 firstTok.column body
+            success { name: name, parameters: params, body: body', guards: [], typeSignature: Nothing } rest5
+          Nothing -> failure "Expected expression"
     _ -> do
       -- Simple function with =
       Tuple _ rest''' <- expectOperator rest' "="
@@ -1633,9 +1921,12 @@ parseGuardedExprs tokens = parseGuardedExprsAcc tokens []
     parseGuardedExprsAcc toks acc =
       let toks' = skipNewlines toks
       in case Array.head toks' of
-        Just tok | tok.tokenType == TokOperator, tok.value == "|" -> do
-          Tuple guard rest <- parseOneGuardedExpr (Array.drop 1 toks')
-          parseGuardedExprsAcc rest (Array.snoc acc guard)
+        Just tok ->
+          if tok.tokenType == TokOperator && tok.value == "|"
+          then do
+            Tuple guard rest <- parseOneGuardedExpr (Array.drop 1 toks')
+            parseGuardedExprsAcc rest (Array.snoc acc guard)
+          else success acc toks'
         _ -> success acc toks'
 
 -- | Parse one guarded expression: guard-clause(, guard-clause)* = expr
@@ -1652,8 +1943,10 @@ parseGuardClauses tokens acc = do
   Tuple clause rest <- parseOneGuardClause tokens
   let rest' = skipNewlines rest
   case Array.head rest' of
-    Just tok | tok.tokenType == TokDelimiter, tok.value == "," ->
-      parseGuardClauses (Array.drop 1 rest') (Array.snoc acc clause)
+    Just tok ->
+      if tok.tokenType == TokDelimiter && tok.value == ","
+      then parseGuardClauses (Array.drop 1 rest') (Array.snoc acc clause)
+      else success (Array.snoc acc clause) rest'
     _ -> success (Array.snoc acc clause) rest'
 
 -- | Parse a single guard clause: either `Pat <- expr` or just `expr`
@@ -1675,9 +1968,12 @@ tryPatternGuard tokens = do
   Tuple pat rest <- parsePattern tokens
   let rest' = skipNewlines rest
   case Array.head rest' of
-    Just tok | tok.tokenType == TokOperator, tok.value == "<-" -> do
-      Tuple expr rest'' <- parseFuncGuardExpr (Array.drop 1 rest')
-      success (Ast.GuardPat pat expr) rest''
+    Just tok ->
+      if tok.tokenType == TokOperator && tok.value == "<-"
+      then do
+        Tuple expr rest'' <- parseFuncGuardExpr (Array.drop 1 rest')
+        success (Ast.GuardPat pat expr) rest''
+      else failure "Expected <- for pattern guard"
     _ -> failure "Expected <- for pattern guard"
 
 -- | Parse guard expression for function guards (stops at = or ,)
@@ -1689,9 +1985,12 @@ parseGuardExprOr tokens = do
   Tuple left rest <- parseGuardExprAnd tokens
   let rest' = skipNewlines rest
   case Array.head rest' of
-    Just tok | tok.tokenType == TokOperator, tok.value == "||" -> do
-      Tuple right rest'' <- parseGuardExprOr (Array.drop 1 rest')
-      success (Ast.ExprBinOp "||" left right) rest''
+    Just tok ->
+      if tok.tokenType == TokOperator && tok.value == "||"
+      then do
+        Tuple right rest'' <- parseGuardExprOr (Array.drop 1 rest')
+        success (Ast.ExprBinOp "||" left right) rest''
+      else success left rest'
     _ -> success left rest'
 
 parseGuardExprAnd :: Array Token -> ParseResult Ast.Expr
@@ -1699,9 +1998,12 @@ parseGuardExprAnd tokens = do
   Tuple left rest <- parseGuardExprComparison tokens
   let rest' = skipNewlines rest
   case Array.head rest' of
-    Just tok | tok.tokenType == TokOperator, tok.value == "&&" -> do
-      Tuple right rest'' <- parseGuardExprAnd (Array.drop 1 rest')
-      success (Ast.ExprBinOp "&&" left right) rest''
+    Just tok ->
+      if tok.tokenType == TokOperator && tok.value == "&&"
+      then do
+        Tuple right rest'' <- parseGuardExprAnd (Array.drop 1 rest')
+        success (Ast.ExprBinOp "&&" left right) rest''
+      else success left rest'
     _ -> success left rest'
 
 parseGuardExprComparison :: Array Token -> ParseResult Ast.Expr
@@ -1709,9 +2011,12 @@ parseGuardExprComparison tokens = do
   Tuple left rest <- parseGuardExprApp tokens
   let rest' = skipNewlines rest
   case Array.head rest' of
-    Just tok | tok.tokenType == TokOperator, isComparisonOp tok.value -> do
-      Tuple right rest'' <- parseGuardExprApp (Array.drop 1 rest')
-      success (Ast.ExprBinOp tok.value left right) rest''
+    Just tok ->
+      if tok.tokenType == TokOperator && isComparisonOp tok.value
+      then do
+        Tuple right rest'' <- parseGuardExprApp (Array.drop 1 rest')
+        success (Ast.ExprBinOp tok.value left right) rest''
+      else success left rest'
     _ -> success left rest'
   where
     isComparisonOp op = Array.elem op ["==", "/=", "<", ">", "<=", ">="]
@@ -1726,11 +2031,14 @@ parseGuardExprAppRest func tokens =
   let tokens' = skipNewlines tokens
   in case Array.head tokens' of
     -- Stop at guard terminators
-    Just tok | tok.tokenType == TokOperator, Array.elem tok.value ["=", ",", "|", "||", "&&", "==", "/=", "<", ">", "<=", ">="] ->
-      success func tokens'
-    -- Stop at newline that's followed by | (next guard)
-    Just tok | tok.tokenType == TokNewline ->
-      success func tokens'
+    Just tok ->
+      if tok.tokenType == TokOperator && Array.elem tok.value ["=", ",", "|", "||", "&&", "==", "/=", "<", ">", "<=", ">="]
+      then success func tokens'
+      else if tok.tokenType == TokNewline
+        then success func tokens'
+        else case parseGuardExprAtom tokens' of
+          Right (Tuple arg rest) -> parseGuardExprAppRest (Ast.ExprApp func arg) rest
+          Left _ -> success func tokens'
     -- Try to parse another atom as argument
     _ -> case parseGuardExprAtom tokens' of
       Right (Tuple arg rest) -> parseGuardExprAppRest (Ast.ExprApp func arg) rest
@@ -1740,78 +2048,96 @@ parseGuardExprAtom :: Array Token -> ParseResult Ast.Expr
 parseGuardExprAtom tokens =
   let tokens' = skipNewlines tokens
   in case Array.head tokens' of
-    Just tok | tok.tokenType == TokIdentifier ->
-      -- Check for record field access: r.x.y
-      let rest = Array.drop 1 tokens'
-          baseExpr = Ast.ExprVar tok.value
-      in parseRecordAccessChain baseExpr rest
-    Just tok | tok.tokenType == TokNumber ->
-      case Int.fromString tok.value of
+    Just tok ->
+      if tok.tokenType == TokIdentifier
+      then
+        -- Check for record field access: r.x.y
+        let rest = Array.drop 1 tokens'
+            baseExpr = Ast.ExprVar tok.value
+        in parseRecordAccessChain baseExpr rest
+      else if tok.tokenType == TokNumber
+      then case Int.fromString tok.value of
         Just n -> success (Ast.ExprLit (Ast.LitInt n)) (Array.drop 1 tokens')
         Nothing -> failure ("Invalid integer: " <> tok.value)
-    Just tok | tok.tokenType == TokString ->
-      success (Ast.ExprLit (Ast.LitString tok.value)) (Array.drop 1 tokens')
-    Just tok | tok.tokenType == TokKeyword, tok.value == "true" ->
-      success (Ast.ExprLit (Ast.LitBool true)) (Array.drop 1 tokens')
-    Just tok | tok.tokenType == TokKeyword, tok.value == "false" ->
-      success (Ast.ExprLit (Ast.LitBool false)) (Array.drop 1 tokens')
-    Just tok | tok.tokenType == TokKeyword, tok.value == "otherwise" ->
-      success (Ast.ExprLit (Ast.LitBool true)) (Array.drop 1 tokens')
-    Just tok | tok.tokenType == TokDelimiter, tok.value == "(" -> do
-      Tuple expr rest <- parseExpression (Array.drop 1 tokens')
-      Tuple _ rest' <- expectDelimiter rest ")"
-      success expr rest'
-    Just tok | tok.tokenType == TokOperator, tok.value == "." ->
-      -- Record accessor like .id
-      case Array.head (Array.drop 1 tokens') of
-        Just fld | fld.tokenType == TokIdentifier ->
-          -- Return a section that will be applied
-          success (Ast.ExprSection ("." <> fld.value)) (Array.drop 2 tokens')
-        _ -> failure "Expected field name after ."
+      else if tok.tokenType == TokString
+      then success (Ast.ExprLit (Ast.LitString tok.value)) (Array.drop 1 tokens')
+      else if tok.tokenType == TokKeyword && tok.value == "true"
+      then success (Ast.ExprLit (Ast.LitBool true)) (Array.drop 1 tokens')
+      else if tok.tokenType == TokKeyword && tok.value == "false"
+      then success (Ast.ExprLit (Ast.LitBool false)) (Array.drop 1 tokens')
+      else if tok.tokenType == TokKeyword && tok.value == "otherwise"
+      then success (Ast.ExprLit (Ast.LitBool true)) (Array.drop 1 tokens')
+      else if tok.tokenType == TokDelimiter && tok.value == "("
+      then do
+        Tuple expr rest <- parseExpression (Array.drop 1 tokens')
+        Tuple _ rest' <- expectDelimiter rest ")"
+        success expr rest'
+      else if tok.tokenType == TokOperator && tok.value == "."
+      then
+        -- Record accessor like .id
+        case Array.head (Array.drop 1 tokens') of
+          Just fld ->
+            if fld.tokenType == TokIdentifier
+            then success (Ast.ExprSection ("." <> fld.value)) (Array.drop 2 tokens')
+            else failure "Expected field name after ."
+          _ -> failure "Expected field name after ."
+      else failure "Expected guard expression atom"
     _ -> failure "Expected guard expression atom"
 
 -- | Parse record field access chain: .field1.field2...
 parseRecordAccessChain :: Ast.Expr -> Array Token -> ParseResult Ast.Expr
 parseRecordAccessChain expr tokens =
   case Array.head tokens of
-    Just tok | tok.tokenType == TokOperator, tok.value == "." ->
-      case Array.head (Array.drop 1 tokens) of
-        Just fld | fld.tokenType == TokIdentifier ->
-          -- Continue parsing more field accesses
-          parseRecordAccessChain (Ast.ExprRecordAccess expr fld.value) (Array.drop 2 tokens)
+    Just tok ->
+      if tok.tokenType == TokOperator && tok.value == "."
+      then case Array.head (Array.drop 1 tokens) of
+        Just fld ->
+          if fld.tokenType == TokIdentifier
+          then parseRecordAccessChain (Ast.ExprRecordAccess expr fld.value) (Array.drop 2 tokens)
+          else success expr tokens  -- No field name, stop here
         _ -> success expr tokens  -- No field name, stop here
+      else success expr tokens  -- No dot, stop here
     _ -> success expr tokens  -- No dot, stop here
 
 maybeParseWhere :: Array Token -> Int -> Ast.Expr -> ParseResult Ast.Expr
 maybeParseWhere tokens _ body = do
   let tokens' = skipNewlines tokens
   case Array.head tokens' of
-    Just t | t.tokenType == TokKeyword, t.value == "where" ->
-      let whereCol = t.column
-          rest = skipNewlines (Array.drop 1 tokens')
-      in case Array.head rest of
-        Just firstTok | firstTok.column > whereCol -> do
-          Tuple bindings rest' <- collectWhereBindings rest whereCol []
-          success (Ast.ExprLet bindings body) rest'
-        _ -> success body tokens'
+    Just t ->
+      if t.tokenType == TokKeyword && t.value == "where"
+      then
+        let whereCol = t.column
+            rest = skipNewlines (Array.drop 1 tokens')
+        in case Array.head rest of
+          Just firstTok ->
+            if firstTok.column > whereCol
+            then do
+              Tuple bindings rest' <- collectWhereBindings rest whereCol []
+              success (Ast.ExprLet bindings body) rest'
+            else success body tokens'
+          _ -> success body tokens'
+      else success body tokens
     _ -> success body tokens
 
 collectWhereBindings :: Array Token -> Int -> Array Ast.LetBind -> ParseResult (Array Ast.LetBind)
 collectWhereBindings tokens whereCol acc = do
   let tokens' = skipNewlines tokens
   case Array.head tokens' of
-    Just t | t.column > whereCol -> do
-      -- Check if this is a type signature (name ::) or a function definition (name params =)
-      case isTypeSignatureLine tokens' of
-        true -> do
-          -- Skip the type signature line and continue with the actual binding
-          let rest = skipToNextLine tokens'
-          collectWhereBindings rest whereCol acc
-        false -> do
-          -- Where bindings are local function definitions
-          Tuple fun rest <- parseFunctionDeclarationRaw tokens'
-          let binding = { pattern: Ast.PatVar fun.name, value: wrapLambda fun.parameters fun.body, typeAnn: Nothing }
-          collectWhereBindings rest whereCol (Array.snoc acc binding)
+    Just t ->
+      if t.column > whereCol
+      then do
+        -- Check if this is a type signature (name ::) or a function definition (name params =)
+        case isTypeSignatureLine tokens' of
+          true -> do
+            -- Skip the type signature line and continue with the actual binding
+            let rest = skipToNextLine tokens'
+            collectWhereBindings rest whereCol acc
+          false -> do
+            -- Where bindings are local function definitions
+            Tuple fun rest <- parseFunctionDeclarationRaw tokens'
+            let binding = { pattern: Ast.PatVar fun.name, value: wrapLambda fun.parameters fun.body, typeAnn: Nothing }
+            collectWhereBindings rest whereCol (Array.snoc acc binding)
+      else success acc tokens'
     _ -> success acc tokens'
   where
     wrapLambda :: Array Ast.Pattern -> Ast.Expr -> Ast.Expr
@@ -1823,10 +2149,15 @@ collectWhereBindings tokens whereCol acc = do
     isTypeSignatureLine :: Array Token -> Boolean
     isTypeSignatureLine toks =
       case Array.head toks of
-        Just t1 | t1.tokenType == TokIdentifier ->
-          case Array.head (Array.drop 1 toks) of
-            Just t2 | t2.tokenType == TokOperator, t2.value == "::" -> true
+        Just t1 ->
+          if t1.tokenType == TokIdentifier
+          then case Array.head (Array.drop 1 toks) of
+            Just t2 ->
+              if t2.tokenType == TokOperator && t2.value == "::"
+              then true
+              else false
             _ -> false
+          else false
         _ -> false
 
     -- Skip tokens until we hit a newline at column 1 or a newline followed by content at whereCol level
@@ -1834,13 +2165,19 @@ collectWhereBindings tokens whereCol acc = do
     skipToNextLine toks =
       case Array.head toks of
         Nothing -> toks
-        Just t | t.tokenType == TokNewline ->
-          let rest = Array.drop 1 toks
-          in case Array.head rest of
-            Just t' | t'.column <= whereCol -> toks  -- Stop before the newline - outdented content
-            Just t' | t'.tokenType == TokNewline -> skipToNextLine rest  -- Skip blank line
-            _ -> rest  -- Continue with indented content
-        _ -> skipToNextLine (Array.drop 1 toks)
+        Just t ->
+          if t.tokenType == TokNewline
+          then
+            let rest = Array.drop 1 toks
+            in case Array.head rest of
+              Just t' ->
+                if t'.column <= whereCol
+                then toks  -- Stop before the newline - outdented content
+                else if t'.tokenType == TokNewline
+                then skipToNextLine rest  -- Skip blank line
+                else rest  -- Continue with indented content
+              _ -> rest  -- Continue with indented content
+          else skipToNextLine (Array.drop 1 toks)
 
 parseTypeSignatureDecl :: Array Token -> ParseResult Ast.Declaration
 parseTypeSignatureDecl tokens = do
@@ -1861,8 +2198,10 @@ parseDeclarationsAcc tokens acc = do
     Nothing -> success acc []
     _ -> case parseDeclaration tokens' of
       Right (Tuple decl rest) -> parseDeclarationsAcc rest (Array.snoc acc decl)
-      Left _ | Array.length acc > 0 -> success acc tokens'
-      Left err -> Left err
+      Left _ ->
+        if Array.length acc > 0
+        then success acc tokens'
+        else failure "Failed to parse declaration"
 
 parseModule :: Array Token -> ParseResult Ast.Module
 parseModule tokens = do

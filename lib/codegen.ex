@@ -163,8 +163,25 @@ defmodule Nova.Compiler.CodeGen do
   # Identifier
   defp compile_expr(%Ast.Identifier{name: n}, _env), do: sanitize_name(n)
 
-  defp compile_expr(%Ast.QualifiedIdentifier{namespace: ns, name: n}, _env),
-    do: "#{sanitize_name(ns)}.#{sanitize_name(n)}"
+  defp compile_expr(%Ast.QualifiedIdentifier{namespace: ns, name: n}, _env) do
+    nova_ns = translate_module(ns)
+    func = sanitize_name(n)
+    # Handle elem -> elem_ to avoid conflict with Kernel.elem
+    func = if func == "elem", do: "elem_", else: func
+    "#{nova_ns}.#{func}"
+  end
+
+  # Translate PureScript modules to Nova.* modules
+  defp translate_module("Array"), do: "Nova.Array"
+  defp translate_module("Data.Array"), do: "Nova.Array"
+  defp translate_module("String"), do: "Nova.String"
+  defp translate_module("Data.String"), do: "Nova.String"
+  defp translate_module("Data.String.CodeUnits"), do: "Nova.String"
+  defp translate_module("Map"), do: "Nova.Map"
+  defp translate_module("Data.Map"), do: "Nova.Map"
+  defp translate_module("Set"), do: "Nova.Set"
+  defp translate_module("Data.Set"), do: "Nova.Set"
+  defp translate_module(other), do: other
 
   # Binary ops special‑cased
   defp compile_expr(%Ast.BinaryOp{op: "/=", left: l, right: r}, env) do
@@ -204,6 +221,10 @@ defmodule Nova.Compiler.CodeGen do
           else
             base
           end
+
+        # QualifiedIdentifier - already produces valid call target
+        %Ast.QualifiedIdentifier{} ->
+          compile_expr(f, env)
 
         _ ->
           "(" <> compile_expr(f, env) <> ")"
