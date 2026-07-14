@@ -1,4 +1,6 @@
 defmodule Nova.Array do
+  import Kernel, except: [elem: 2]
+
   @moduledoc """
   Array operations for Nova-generated Elixir code.
   Maps PureScript's Data.Array to Elixir list operations.
@@ -17,6 +19,8 @@ defmodule Nova.Array do
   @doc "Check if element is in array"
   def elem_(x, xs) when is_list(xs), do: x in xs
   def elem_(x), do: fn xs -> elem_(x, xs) end
+  def elem(x, xs), do: elem_(x, xs)
+  def elem(x), do: elem_(x)
 
   @doc "Get head of array"
   def head([]), do: :nothing
@@ -51,10 +55,11 @@ defmodule Nova.Array do
 
   @doc "Uncons - split head and tail"
   def uncons([]), do: :nothing
-  def uncons([h | t]), do: {:just, {:tuple, h, t}}
+  def uncons([h | t]), do: {:just, %{head: h, tail: t}}
 
   @doc "Unsnoc - split init and last"
   def unsnoc([]), do: :nothing
+
   def unsnoc(xs) do
     {init, [last]} = Enum.split(xs, -1)
     {:just, {:tuple, init, last}}
@@ -125,6 +130,8 @@ defmodule Nova.Array do
 
   @doc "Concatenate two arrays"
   def concat(xs, ys) when is_list(xs) and is_list(ys), do: xs ++ ys
+  def concat([]), do: []
+  def concat([head | _] = xss) when is_list(head), do: List.flatten(xss)
   def concat(xs), do: fn ys -> concat(xs, ys) end
 
   @doc "Filter array"
@@ -157,7 +164,7 @@ defmodule Nova.Array do
   def mapWithIndex(f, xs) when is_list(xs) do
     xs
     |> Enum.with_index()
-    |> Enum.map(fn {x, i} -> f.(i).(x) end)
+    |> Enum.map(fn {x, i} -> call2(f, i, x) end)
   end
 
   def mapWithIndex(f), do: fn xs -> mapWithIndex(f, xs) end
@@ -281,12 +288,12 @@ defmodule Nova.Array do
   # ─────────────────────────────────────────────────────────────
 
   @doc "Left fold"
-  def foldl(f, acc, xs) when is_list(xs), do: List.foldl(xs, acc, fn x, a -> f.(a).(x) end)
+  def foldl(f, acc, xs) when is_list(xs), do: List.foldl(xs, acc, fn x, a -> call2(f, a, x) end)
   def foldl(f, acc), do: fn xs -> foldl(f, acc, xs) end
   def foldl(f), do: fn acc -> fn xs -> foldl(f, acc, xs) end end
 
   @doc "Right fold"
-  def foldr(f, acc, xs) when is_list(xs), do: List.foldr(xs, acc, fn x, a -> f.(x).(a) end)
+  def foldr(f, acc, xs) when is_list(xs), do: List.foldr(xs, acc, fn x, a -> call2(f, x, a) end)
   def foldr(f, acc), do: fn xs -> foldr(f, acc, xs) end
   def foldr(f), do: fn acc -> fn xs -> foldr(f, acc, xs) end end
 
@@ -393,4 +400,18 @@ defmodule Nova.Array do
   @doc "Replicate element n times"
   def replicate(n, x) when is_integer(n), do: List.duplicate(x, n)
   def replicate(n), do: fn x -> replicate(n, x) end
+
+  # Generated Elixir uses snake_case names. These aliases keep the temporary
+  # hand-written runtime aligned with the names the PureScript backend emits.
+  def map_with_index(f, xs), do: mapWithIndex(f, xs)
+  def map_with_index(f), do: mapWithIndex(f)
+  def map_maybe(f, xs), do: mapMaybe(f, xs)
+  def map_maybe(f), do: mapMaybe(f)
+  def drop_while(f, xs), do: dropWhile(f, xs)
+  def drop_while(f), do: dropWhile(f)
+  def from_foldable(xs) when is_list(xs), do: xs
+  def to_unfoldable(xs) when is_list(xs), do: xs
+
+  defp call2(f, a, b) when is_function(f, 2), do: f.(a, b)
+  defp call2(f, a, b), do: f.(a).(b)
 end

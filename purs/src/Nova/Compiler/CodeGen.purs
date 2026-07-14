@@ -46,8 +46,24 @@ collectModuleFuncs decls = foldr go Set.empty decls
 collectFuncArities :: Array Declaration -> Array { name :: String, arity :: Int }
 collectFuncArities decls = Array.mapMaybe go decls
   where
-    go (DeclFunction func) = Just { name: func.name, arity: length func.parameters }
+    go (DeclFunction func) = Just { name: func.name, arity: functionArity func }
     go _ = Nothing
+
+functionArity :: FunctionDeclaration -> Int
+functionArity func =
+  let explicit = Array.length func.parameters
+  in if explicit > 0
+     then explicit
+     else case func.typeSignature of
+       Just sig -> typeExprArity sig.ty
+       Nothing -> 0
+
+typeExprArity :: TypeExpr -> Int
+typeExprArity (TyExprArrow _ rest) = 1 + typeExprArity rest
+typeExprArity (TyExprForAll _ ty) = typeExprArity ty
+typeExprArity (TyExprConstrained _ ty) = typeExprArity ty
+typeExprArity (TyExprParens ty) = typeExprArity ty
+typeExprArity _ = 0
 
 -- | Look up the arity of a function
 lookupArity :: String -> GenCtx -> Maybe Int
@@ -80,22 +96,31 @@ genDeclaration _ _ = "  # unsupported declaration"
 -- | Generate function definition
 genFunction :: GenCtx -> FunctionDeclaration -> String
 genFunction ctx func =
-  let -- Add parameters to locals
-      ctxWithParams = foldr addLocalsFromPattern ctx func.parameters
-      params = intercalate ", " (map genPattern func.parameters)
+  let arity = functionArity func
+      syntheticNames = Array.mapWithIndex (\i _ -> "__eta_arg" <> show i) (Array.replicate arity "")
+      needsEta = Array.null func.parameters && arity > 0
+      actualParams = if needsEta then map PatVar syntheticNames else func.parameters
+      actualBody = if needsEta then applyMany func.body (map ExprVar syntheticNames) else func.body
+      -- Add parameters to locals
+      ctxWithParams = foldr addLocalsFromPattern ctx actualParams
+      params = intercalate ", " (map genPattern actualParams)
   in if Array.null func.guards
      then
-       let body = genExprCtx ctxWithParams 2 func.body
+       let body = genExprCtx ctxWithParams 2 actualBody
        in "  def " <> snakeCase func.name <> "(" <> params <> ") do\n" <>
           body <> "\n" <>
           "  end"
+
      else
-       -- Generate guarded function using cond expression
-       let guardClauses = map (genGuardedExpr ctxWithParams 4) func.guards
-           condExpr = "    cond do\n" <> intercalate "\n" guardClauses <> "\n    end"
+       -- Guard alternatives must fall through when either a boolean or
+       -- pattern guard fails.
+       let guardedBody = genGuardedSequence ctxWithParams 2 func.guards
        in "  def " <> snakeCase func.name <> "(" <> params <> ") do\n" <>
-          condExpr <> "\n" <>
+          guardedBody <> "\n" <>
           "  end"
+
+applyMany :: Expr -> Array Expr -> Expr
+applyMany func args = Array.foldl ExprApp func args
 
 -- | Generate a guarded expression clause for cond
 -- | Pattern guards need special handling - they become nested case expressions
@@ -152,6 +177,11 @@ genPattern :: Pattern -> String
 genPattern (PatVar name) = snakeCase name
 genPattern PatWildcard = "_"
 genPattern (PatLit lit) = genLiteral lit
+genPattern (PatCon "__NativeTuple" pats) =
+  "{" <> intercalate ", " (map genPattern pats) <> "}"
+genPattern (PatCon "Nil" []) = "[]"
+genPattern (PatCon "Cons" [head, tail]) =
+  "[" <> genPattern head <> " | " <> genPattern tail <> "]"
 genPattern (PatCon name pats) =
   -- Handle qualified constructor names (e.g., Ast.PatVar -> pat_var)
   let conName = case String.lastIndexOf (String.Pattern ".") name of
@@ -262,10 +292,53 @@ isAstConstructor name = Array.elem name
   , "TokOperator", "TokDelimiter", "TokNewline", "TokUnrecognized"
   ]
 
+-- | Arity of an Ast constructor when it is passed as a first-class function.
+-- | Elixir captures require the arity explicitly.
+astConstructorArity :: String -> Int
+astConstructorArity name = case name of
+  "PatWildcard" -> 0
+  "ImportAll" -> 0
+  "ImportNone" -> 0
+  "TokKeyword" -> 0
+  "TokIdentifier" -> 0
+  "TokNumber" -> 0
+  "TokString" -> 0
+  "TokChar" -> 0
+  "TokOperator" -> 0
+  "TokDelimiter" -> 0
+  "TokNewline" -> 0
+  "TokUnrecognized" -> 0
+  "ExprApp" -> 2
+  "ExprLambda" -> 2
+  "ExprLet" -> 2
+  "ExprIf" -> 3
+  "ExprCase" -> 2
+  "ExprBinOp" -> 3
+  "ExprRecordAccess" -> 2
+  "ExprQualified" -> 2
+  "ExprRecordUpdate" -> 2
+  "ExprTyped" -> 2
+  "ExprUnaryOp" -> 2
+  "ExprSectionLeft" -> 2
+  "ExprSectionRight" -> 2
+  "PatCon" -> 2
+  "PatRecord" -> 1
+  "PatList" -> 1
+  "PatCons" -> 2
+  "PatAs" -> 2
+  "PatTyped" -> 2
+  "TyExprApp" -> 2
+  "TyExprArrow" -> 2
+  "TyExprRecord" -> 2
+  "TyExprForAll" -> 2
+  "TyExprConstrained" -> 2
+  "GuardPat" -> 2
+  _ -> 1
+
 -- | Check if a name is a prelude function that maps to Nova.Runtime
 isPreludeFunc :: String -> Boolean
 isPreludeFunc name = Array.elem name
-  [ "show", "map", "foldl", "foldr", "foldM", "filter"
+  [ "show", "map", "foldl", "foldr", "foldM", "filter", "fst", "snd"
   , "intercalate", "identity", "const", "compose"
   , "pure", "otherwise", "length", "zip", "tuple"
   , "just", "nothing", "left", "right"
@@ -323,13 +396,57 @@ translateQualified mod name =
         "Data.Set" -> "Nova.Set"
         "Array" -> "Nova.Array"
         "Data.Array" -> "Nova.Array"
+        "List" -> "Nova.Array"
+        "Data.List" -> "Nova.Array"
         "String" -> "Nova.String"
         "Data.String" -> "Nova.String"
         "Data.String.CodeUnits" -> "Nova.String"
         "SCU" -> "Nova.String"
         "CU" -> "Nova.String"
+        "Int" -> "Nova.Int"
+        "Data.Int" -> "Nova.Int"
+        "Number" -> "Nova.Number"
+        "Data.Number" -> "Nova.Number"
+        "Ast" -> "Nova.Compiler.Ast"
         _ -> elixirModuleName mod
   in elixirMod <> "." <> snakeCase name
+
+qualifiedFunctionArity :: String -> String -> Int
+qualifiedFunctionArity mod name =
+  if mod == "Ast" || mod == "Nova.Compiler.Ast"
+  then astConstructorArity name
+  else if mod == "Types" || mod == "Nova.Compiler.Types"
+  then typesFunctionArity name
+  else if (mod == "Map" || mod == "Data.Map" || mod == "Set" || mod == "Data.Set") && name == "empty"
+  then 0
+  else case name of
+    "mapWithIndex" -> 2
+    "foldl" -> 3
+    "foldr" -> 3
+    "foldM" -> 3
+    "map" -> 2
+    "filter" -> 2
+    "find" -> 2
+    "all" -> 2
+    "any" -> 2
+    _ -> 1
+
+typesFunctionArity :: String -> Int
+typesFunctionArity name =
+  if Array.elem name
+       [ "emptySubst", "tInt", "tString", "tBool", "tChar", "tNumber"
+       , "emptyEnv", "builtinPrelude"
+       ]
+  then 0
+  else if Array.elem name
+       [ "singleSubst", "composeSubst", "applySubst", "lookupSubst"
+       , "extendEnv", "lookupEnv", "applySubstToEnv", "mkScheme"
+       , "tArray", "tMaybe", "tList", "tSet"
+       ]
+  then 2
+  else if Array.elem name [ "tArrow", "tEither", "tTuple", "tMap" ]
+  then 2
+  else 1
 
 -- | Generate a data constructor application with proper arity
 genConstructorApp :: GenCtx -> Int -> String -> Array Expr -> String
@@ -378,10 +495,13 @@ genExpr' ctx _ (ExprVar name) =
     "True" -> "true"
     "False" -> "false"
     "not" -> "(&Kernel.not/1)"  -- PureScript's not is a function
-    "mod" -> "(&rem/2)"  -- PureScript's mod is Elixir's rem
+    "mod" -> if Set.member name ctx.locals then snakeCase name else "(&rem/2)"
+    "mapWithIndex" -> "(&Nova.Array.map_with_index/2)"
     _ ->
+      if Set.member name ctx.locals
+      then snakeCase name
       -- Handle qualified names (e.g., Array.elem from backtick syntax)
-      if String.contains (String.Pattern ".") name
+      else if String.contains (String.Pattern ".") name
       then
         let parts = String.split (String.Pattern ".") name
             len = Array.length parts
@@ -390,11 +510,18 @@ genExpr' ctx _ (ExprVar name) =
                     funcName = case Array.last parts of
                       Just n -> n
                       Nothing -> name
-                in "(&" <> translateQualified (intercalate "." modParts) funcName <> "/2)"
+                    qualifiedMod = intercalate "." modParts
+                    target = translateQualified qualifiedMod funcName
+                    arity = qualifiedFunctionArity qualifiedMod funcName
+                in if arity == 0 then target <> "()" else "(&" <> target <> "/" <> show arity <> ")"
            else snakeCase name
       -- Handle nullary data constructors as atoms (e.g., TokOperator -> :tok_operator)
       else if isNullaryConstructor name
       then ":" <> snakeCase name
+      -- Ast constructors used as values (for example `map PatVar names`)
+      -- must become remote function captures rather than local variables.
+      else if isAstConstructor name
+      then "(&Nova.Compiler.Ast." <> snakeCase name <> "/" <> show (astConstructorArity name) <> ")"
       -- If it's a module function used as a value (not in call position),
       -- generate a function reference &func/arity
       else if isModuleFunc ctx name
@@ -403,13 +530,18 @@ genExpr' ctx _ (ExprVar name) =
              Just arity -> "(&" <> snakeCase name <> "/" <> show arity <> ")"  -- Generate function reference
              Nothing -> "(&" <> snakeCase name <> "/1)"  -- Default to arity 1
       else if isTypesModuleFunc name
-      then "(&Nova.Compiler.Types." <> snakeCase name <> "/1)"
+      then let arity = typesFunctionArity name
+               target = "Nova.Compiler.Types." <> snakeCase name
+           in if arity == 0 then target <> "()" else "(&" <> target <> "/" <> show arity <> ")"
       else if isUnifyModuleFunc name
       then "(&Nova.Compiler.Unify." <> snakeCase name <> "/1)"
       else if isPreludeFunc name
       then "(&Nova.Runtime." <> snakeCase name <> "/1)"
       else snakeCase name
-genExpr' _ _ (ExprQualified mod name) = translateQualified mod name
+genExpr' _ _ (ExprQualified mod name) =
+  let target = translateQualified mod name
+      arity = qualifiedFunctionArity mod name
+  in if arity == 0 then target <> "()" else "(&" <> target <> "/" <> show arity <> ")"
 genExpr' _ _ (ExprLit lit) = genLiteral lit
 
 genExpr' ctx indent (ExprApp f arg) =
@@ -429,6 +561,7 @@ genExpr' ctx indent (ExprApp f arg) =
       -- Handle special built-in functions first
       if n == "not" then "not(" <> argsS <> ")"
       else if n == "mod" then "rem(" <> argsS <> ")"
+      else if n == "mapWithIndex" then "Nova.Array.map_with_index(" <> argsS <> ")"
       -- Handle qualified names (e.g., Array.elem from backtick syntax)
       else if String.contains (String.Pattern ".") n
       then
@@ -445,9 +578,21 @@ genExpr' ctx indent (ExprApp f arg) =
       -- Handle data constructors specially
       else if isDataConstructor n
       then genConstructorApp c i n as
-      -- Handle partial applications of known binary functions
-      else if isModuleFunc c n && isBinaryFunc n && length as == 1
-      then "fn __x__ -> " <> snakeCase n <> "(" <> argsS <> ", __x__) end"
+      -- Local functions are anonymous Elixir functions. Preserve partial
+      -- application when exactly one argument remains.
+      else if Set.member n c.locals
+      then case lookupArity n c of
+        Just arity ->
+          if Array.length as < arity
+          then genPartialCall (snakeCase n) true argsS (Array.length as) arity
+          else snakeCase n <> ".(" <> argsS <> ")"
+        Nothing -> snakeCase n <> ".(" <> argsS <> ")"
+      -- Module functions can be curried in PureScript but Elixir calls have a
+      -- fixed arity, so turn under-applied calls into closures.
+      else if isModuleFunc c n && isUnderApplied c n (Array.length as)
+      then case lookupArity n c of
+        Just arity -> genPartialCall (snakeCase n) false argsS (Array.length as) arity
+        Nothing -> snakeCase n <> "(" <> argsS <> ")"
       else if isModuleFunc c n
       then snakeCase n <> "(" <> argsS <> ")"
       -- Handle external module functions
@@ -469,10 +614,12 @@ genExpr' ctx indent (ExprLambda pats body) =
   in "fn " <> params <> " -> " <> genExpr' ctxWithParams indent body <> " end"
 
 genExpr' ctx indent (ExprLet binds body) =
-  let ctxWithBinds = foldr (\b c -> addLocalsFromPattern b.pattern c) ctx binds
+  let mergedBinds = mergeLocalFunctionBinds binds
+      ctxWithLocals = foldr (\b c -> addLocalsFromPattern b.pattern c) ctx mergedBinds
+      ctxWithBinds = foldr addLocalFunctionArity ctxWithLocals mergedBinds
       -- Sort bindings by dependencies: bindings that don't depend on others come first
-      sortedBinds = sortBindsByDependencies binds
-      bindCode = intercalate "\n" (map (genLetBindCtx ctx (indent + 1)) sortedBinds)
+      sortedBinds = sortBindsByDependencies mergedBinds
+      bindCode = intercalate "\n" (map (genLetBindCtx ctxWithBinds (indent + 1)) sortedBinds)
   in "\n" <> bindCode <> "\n" <> ind (indent + 1) <> genExpr' ctxWithBinds 0 body
 
 genExpr' ctx indent (ExprIf cond then_ else_) =
@@ -483,9 +630,11 @@ genExpr' ctx indent (ExprIf cond then_ else_) =
   ind indent <> "end"
 
 genExpr' ctx indent (ExprCase scrutinee clauses) =
-  "case " <> genExpr' ctx indent scrutinee <> " do\n" <>
-  intercalate "\n" (map (genCaseClauseCtx ctx (indent + 1)) clauses) <> "\n" <>
-  ind indent <> "end"
+  if Array.any caseClauseNeedsSequentialFallback clauses
+  then genSequentialCaseExpr ctx indent (genExpr' ctx indent scrutinee) clauses
+  else "case " <> genExpr' ctx indent scrutinee <> " do\n" <>
+       intercalate "\n" (map (genCaseClauseCtx ctx (indent + 1)) clauses) <> "\n" <>
+       ind indent <> "end"
 
 genExpr' ctx indent (ExprDo stmts) =
   -- Do notation becomes a series of binds/flatMaps
@@ -549,7 +698,7 @@ genExpr' ctx _ (ExprRecordAccess rec field) =
     collectRecordAccessChain :: Expr -> { base :: Expr, fields :: Array String }
     collectRecordAccessChain (ExprRecordAccess inner f) =
       let result = collectRecordAccessChain inner
-      in result { fields = result.fields <> [f] }
+      in result { fields = Array.snoc result.fields f }
     collectRecordAccessChain e = { base: e, fields: [] }
 
 genExpr' ctx _ (ExprRecordUpdate rec fields) =
@@ -565,6 +714,70 @@ genExpr' _ _ (ExprSection op) =
   case String.stripPrefix (String.Pattern ".") op of
     Just field -> "& &1." <> snakeCase field  -- Record accessor: .id -> & &1.id
     Nothing -> "&(" <> genBinOp op <> "(&1, &2))"  -- Binary operator section
+
+caseClauseNeedsSequentialFallback :: CaseClause -> Boolean
+caseClauseNeedsSequentialFallback clause = case clause.guard of
+  Just g -> not (containsPatternBind g) && not (isGuardSafe g)
+  Nothing -> false
+
+-- | Elixir guards cannot call arbitrary local functions. Lower cases that use
+-- | such guards as a sequence of nested cases and ifs so a failed guard keeps
+-- | trying the remaining PureScript alternatives.
+genSequentialCaseExpr :: GenCtx -> Int -> String -> Array CaseClause -> String
+genSequentialCaseExpr ctx indent value clauses = case Array.uncons clauses of
+  Nothing -> "raise CaseClauseError, term: " <> value
+  Just { head: clause, tail: rest } ->
+    let ctxWithPat = addLocalsFromPattern clause.pattern ctx
+        pat = genPattern clause.pattern
+        body = genExpr' ctxWithPat (indent + 2) clause.body
+        fallbackName = "__case_fallback"
+        fallback = genSequentialCaseExpr ctx (indent + 1) fallbackName rest
+        matchClause = case clause.guard of
+          Nothing -> ind (indent + 1) <> pat <> " -> " <> body
+          Just g ->
+            if containsPatternBind g || isGuardSafe g
+            then genCaseClauseCtx ctx (indent + 1) clause
+            else ind (indent + 1) <> "__case_value = " <> pat <> " ->\n" <>
+                 ind (indent + 2) <> "if " <> genExpr' ctxWithPat indent g <> " do\n" <>
+                 ind (indent + 3) <> body <> "\n" <>
+                 ind (indent + 2) <> "else\n" <>
+                 ind (indent + 3) <> genSequentialCaseExpr ctx (indent + 2) "__case_value" rest <> "\n" <>
+                 ind (indent + 2) <> "end"
+        exhaustive = case clause.pattern of
+          PatWildcard -> case clause.guard of
+            Nothing -> true
+            _ -> false
+          _ -> false
+        fallbackClause = if exhaustive
+          then ""
+          else "\n" <> ind (indent + 1) <> fallbackName <> " -> " <> fallback
+    in "case " <> value <> " do\n" <> matchClause <> fallbackClause <> "\n" <> ind indent <> "end"
+
+genGuardedSequence :: GenCtx -> Int -> Array GuardedExpr -> String
+genGuardedSequence ctx indent guarded = case Array.uncons guarded of
+  Nothing -> ind indent <> "raise CondClauseError"
+  Just { head: ge, tail: rest } ->
+    genGuardClauseSequence ctx ctx indent ge.guards ge.body rest
+
+genGuardClauseSequence :: GenCtx -> GenCtx -> Int -> Array GuardClause -> Expr -> Array GuardedExpr -> String
+genGuardClauseSequence baseCtx ctx indent clauses body alternatives =
+  case Array.uncons clauses of
+    Nothing -> genExprCtx ctx indent body
+    Just { head: clause, tail: rest } -> case clause of
+      GuardExpr expr ->
+        ind indent <> "if " <> genExpr' ctx indent expr <> " do\n" <>
+        genGuardClauseSequence baseCtx ctx (indent + 1) rest body alternatives <> "\n" <>
+        ind indent <> "else\n" <>
+        genGuardedSequence baseCtx (indent + 1) alternatives <> "\n" <>
+        ind indent <> "end"
+      GuardPat pat expr ->
+        let ctxWithPat = addLocalsFromPattern pat ctx
+        in ind indent <> "case " <> genExpr' ctx indent expr <> " do\n" <>
+           ind (indent + 1) <> genPattern pat <> " ->\n" <>
+           genGuardClauseSequence baseCtx ctxWithPat (indent + 2) rest body alternatives <> "\n" <>
+           ind (indent + 1) <> "_ ->\n" <>
+           genGuardedSequence baseCtx (indent + 2) alternatives <> "\n" <>
+           ind indent <> "end"
 
 -- | Generate literal
 genLiteral :: Literal -> String
@@ -608,6 +821,90 @@ containsVar name (ExprRecordUpdate e fs) = containsVar name e || Array.any (\(Tu
 containsVar name (ExprTyped e _) = containsVar name e
 containsVar name (ExprParens e) = containsVar name e
 containsVar _ _ = false
+
+-- | Merge adjacent clauses of a local function into one anonymous function.
+-- | PureScript permits multiple equations in a `where`/`let` block, while
+-- | Elixir requires those clauses to live in a single `fn` value.
+mergeLocalFunctionBinds :: Array LetBind -> Array LetBind
+mergeLocalFunctionBinds binds = case Array.uncons binds of
+  Nothing -> []
+  Just { head: bind, tail: rest } -> case localFunctionBind bind of
+    Nothing -> Array.cons bind (mergeLocalFunctionBinds rest)
+    Just info ->
+      let group = takeSameLocalFunctions info.name rest [bind]
+          merged = mergeLocalFunctionGroup group.same
+      in Array.cons merged (mergeLocalFunctionBinds group.rest)
+
+localFunctionBind :: LetBind -> Maybe { name :: String, params :: Array Pattern, body :: Expr }
+localFunctionBind bind = case bind.pattern of
+  PatVar name -> case bind.value of
+    ExprLambda params body -> Just { name, params, body }
+    _ -> Nothing
+  _ -> Nothing
+
+addLocalFunctionArity :: LetBind -> GenCtx -> GenCtx
+addLocalFunctionArity bind ctx = case localFunctionBind bind of
+  Just info -> ctx { funcArities = Array.snoc ctx.funcArities { name: info.name, arity: Array.length info.params } }
+  Nothing -> ctx
+
+appendCallArg :: String -> String -> String
+appendCallArg args arg = if args == "" then arg else args <> ", " <> arg
+
+isUnderApplied :: GenCtx -> String -> Int -> Boolean
+isUnderApplied ctx name supplied = case lookupArity name ctx of
+  Just arity -> supplied < arity
+  Nothing -> false
+
+genPartialCall :: String -> Boolean -> String -> Int -> Int -> String
+genPartialCall target isLocal args supplied arity =
+  let missing = arity - supplied
+      indexes = Array.range 0 (missing - 1)
+      params = map (\i -> "__partial_arg" <> show i) indexes
+      paramsStr = intercalate ", " params
+      allArgs = Array.foldl appendCallArg args params
+      call = if isLocal
+             then target <> ".(" <> allArgs <> ")"
+             else target <> "(" <> allArgs <> ")"
+  in "fn " <> paramsStr <> " -> " <> call <> " end"
+
+takeSameLocalFunctions :: String -> Array LetBind -> Array LetBind -> { same :: Array LetBind, rest :: Array LetBind }
+takeSameLocalFunctions name binds acc = case Array.uncons binds of
+  Nothing -> { same: acc, rest: [] }
+  Just { head: bind, tail: rest } -> case localFunctionBind bind of
+    Just info ->
+      if info.name == name
+      then takeSameLocalFunctions name rest (Array.snoc acc bind)
+      else { same: acc, rest: binds }
+    Nothing -> { same: acc, rest: binds }
+
+mergeLocalFunctionGroup :: Array LetBind -> LetBind
+mergeLocalFunctionGroup binds =
+  let fallback = { pattern: PatWildcard, value: ExprVar "nil", typeAnn: Nothing }
+      first = fromMaybe fallback (Array.head binds)
+  in if Array.length binds == 1
+     then first
+     else case localFunctionBind first of
+       Nothing -> first
+       Just info ->
+         let arity = Array.length info.params
+             names = Array.mapWithIndex (\i _ -> "__where_arg" <> show i) info.params
+             params = map PatVar names
+             vars = map ExprVar names
+             scrutinee = case vars of
+               [one] -> one
+               _ -> ExprTuple vars
+             clauses = Array.mapMaybe (localFunctionCase arity) binds
+         in first { value = ExprLambda params (ExprCase scrutinee clauses) }
+
+localFunctionCase :: Int -> LetBind -> Maybe CaseClause
+localFunctionCase arity bind = case localFunctionBind bind of
+  Nothing -> Nothing
+  Just info ->
+    if Array.length info.params /= arity
+    then Nothing
+    else case info.params of
+      [one] -> Just { pattern: one, guard: Nothing, body: info.body }
+      _ -> Just { pattern: PatCon "__NativeTuple" info.params, guard: Nothing, body: info.body }
 
 containsVarInDoStmt :: String -> DoStatement -> Boolean
 containsVarInDoStmt name (DoLet binds) = Array.any (\b -> containsVar name b.value) binds
@@ -659,8 +956,8 @@ sortBindsByDependencies binds =
             remaining = partitioned.no
         in if Array.null canResolve
            -- No progress - just append remaining in original order (may have circular deps)
-           then resolved <> map _.bind remaining
-           else topoSort remaining (resolved <> map _.bind canResolve)
+           then Array.concat [ resolved, map _.bind remaining ]
+           else topoSort remaining (Array.concat [ resolved, map _.bind canResolve ])
 
     -- Check if a name is a binding name (not an external reference)
     isBindName name infos = Array.any (\info -> info.name == Just name) infos
@@ -873,14 +1170,17 @@ genDoStmtsCtx ctx indent stmts = case Array.uncons stmts of
         let ctxWithBinds = foldr (\b c -> addLocalsFromPattern b.pattern c) ctx binds
         in intercalate "\n" (map (genLetBindCtx ctx indent) binds) <> "\n" <> genDoStmtsCtx ctxWithBinds indent rest
       DoBind pat e ->
-        -- Monadic bind: unwrap Either result with {:right, {:tuple, ...}} pattern
+        -- The parser uses Either while the tokenizer also uses Maybe do-blocks.
+        -- Preserve each monad's short-circuit value and continue for Right/Just.
         let ctxWithPat = addLocalsFromPattern pat ctx
-            -- Check if pattern is a Tuple destructuring - common for parser results
-            wrappedPat = case pat of
-              PatCon "Tuple" [p1, p2] ->
-                "{:right, {:tuple, " <> genPattern p1 <> ", " <> genPattern p2 <> "}}"
-              _ -> "{:right, " <> genPattern pat <> "}"
-        in wrappedPat <> " = " <> genExpr' ctx indent e <> "\n" <> genDoStmtsCtx ctxWithPat indent rest
+            patCode = genPattern pat
+            restCode = genDoStmtsCtx ctxWithPat (indent + 1) rest
+        in "case " <> genExpr' ctx indent e <> " do\n" <>
+           ind (indent + 1) <> ":nothing -> :nothing\n" <>
+           ind (indent + 1) <> "{:left, __do_error} -> {:left, __do_error}\n" <>
+           ind (indent + 1) <> "{:right, " <> patCode <> "} -> " <> restCode <> "\n" <>
+           ind (indent + 1) <> "{:just, " <> patCode <> "} -> " <> restCode <> "\n" <>
+           ind indent <> "end"
 
 -- | Generate data type (as tagged tuples or structs)
 genDataType :: DataType -> String

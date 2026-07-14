@@ -153,7 +153,9 @@ defmodule Nova.String do
   end
 
   def replaceFirst(pattern, replacement), do: fn s -> replaceFirst(pattern, replacement, s) end
-  def replaceFirst(pattern), do: fn replacement -> fn s -> replaceFirst(pattern, replacement, s) end end
+
+  def replaceFirst(pattern),
+    do: fn replacement -> fn s -> replaceFirst(pattern, replacement, s) end end
 
   @doc "Replace all occurrences"
   def replaceAll(pattern, replacement, s)
@@ -162,7 +164,9 @@ defmodule Nova.String do
   end
 
   def replaceAll(pattern, replacement), do: fn s -> replaceAll(pattern, replacement, s) end
-  def replaceAll(pattern), do: fn replacement -> fn s -> replaceAll(pattern, replacement, s) end end
+
+  def replaceAll(pattern),
+    do: fn replacement -> fn s -> replaceAll(pattern, replacement, s) end end
 
   # ─────────────────────────────────────────────────────────────
   # Splitting and joining
@@ -232,4 +236,24 @@ defmodule Nova.String do
 
   def slice(start, end_), do: fn s -> slice(start, end_, s) end
   def slice(start), do: fn end_ -> fn s -> slice(start, end_, s) end end
+
+  # PureScript newtypes erase at runtime; the generated calls remain explicit.
+  def pattern(value), do: value
+  def replacement(value), do: value
+
+  # Compatibility names for the snake_case emitted by the PureScript backend.
+  def to_code_point_array(s), do: toCodePointArray(s)
+  def from_code_point_array(xs), do: fromCodePointArray(xs)
+  def char_at(i, s), do: charAt(i, s)
+  def char_at(i), do: charAt(i)
+  def last_index_of(pattern, s), do: lastIndexOf(pattern, s)
+  def last_index_of(pattern), do: lastIndexOf(pattern)
+  def replace_all(pattern, replacement, s), do: replaceAll(pattern, replacement, s)
+  def replace_all(pattern, replacement), do: replaceAll(pattern, replacement)
+  def replace_all(pattern), do: replaceAll(pattern)
+  def join_with(separator, xs), do: joinWith(separator, xs)
+  def join_with(separator), do: joinWith(separator)
+  def strip_prefix(prefix, s), do: stripPrefix(prefix, s)
+  def strip_prefix(prefix), do: stripPrefix(prefix)
+  def to_lower(s), do: toLower(s)
 end

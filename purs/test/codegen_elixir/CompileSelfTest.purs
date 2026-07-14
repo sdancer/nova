@@ -3,6 +3,7 @@ module Test.CodeGenElixir.CompileSelfTest where
 import Prelude
 import Effect (Effect)
 import Effect.Console (log)
+import Effect.Exception (throw)
 import Data.Either (Either(..))
 import Data.Tuple (Tuple(..))
 import Data.Array as Array
@@ -43,7 +44,7 @@ parseFile path = do
   content <- readTextFile UTF8 path
   let tokens = tokenize content
   case parseModule tokens of
-    Left _ -> pure []
+    Left err -> throw $ "Failed to parse dependency " <> path <> ": " <> err
     Right (Tuple m _) -> pure m.declarations
 
 compileFile :: String -> String -> Array String -> Effect Unit
@@ -55,13 +56,13 @@ compileFile name path deps = do
   content <- readTextFile UTF8 path
   let tokens = tokenize content
   case parseModule tokens of
-    Left parseErr -> log $ "  Parse error: " <> parseErr
+    Left parseErr -> throw $ "Failed to parse " <> name <> ": " <> parseErr
     Right (Tuple mod _) -> do
       log $ "  Parsed " <> show (Array.length mod.declarations) <> " declarations"
       -- Combine dep declarations with main for type checking
       let allDecls = depDecls <> mod.declarations
       case checkModule emptyEnv allDecls of
-        Left tcErr -> log $ "  Type error: " <> show tcErr
+        Left tcErr -> throw $ "Failed to typecheck " <> name <> ": " <> show tcErr
         Right _env -> do
           log $ "  Type check passed"
           -- Generate code only for the main module

@@ -76,6 +76,10 @@ defmodule Nova.Runtime do
 
   @doc "Map a function over a list"
   def map(f, xs) when is_list(xs), do: Enum.map(xs, f)
+
+  def map(f, xs) when is_map(xs) and not is_struct(xs),
+    do: Map.new(xs, fn {k, v} -> {k, f.(v)} end)
+
   def map(f, {:just, x}), do: {:just, f.(x)}
   def map(_f, :nothing), do: :nothing
   def map(f, {:right, x}), do: {:right, f.(x)}
@@ -89,14 +93,26 @@ defmodule Nova.Runtime do
   # ─────────────────────────────────────────────────────────────
 
   @doc "Left fold"
-  def foldl(f, acc, xs) when is_list(xs), do: List.foldl(xs, acc, fn x, a -> f.(a).(x) end)
+  def foldl(f, acc, xs) when is_list(xs), do: List.foldl(xs, acc, fn x, a -> call2(f, a, x) end)
+
+  def foldl(f, acc, xs) when is_map(xs) and not is_struct(xs),
+    do: Enum.reduce(xs, acc, fn {_key, value}, a -> call2(f, a, value) end)
+
+  def foldl(f, acc, %MapSet{} = xs),
+    do: Enum.reduce(xs, acc, fn value, a -> call2(f, a, value) end)
 
   # Curried versions
   def foldl(f, acc), do: fn xs -> foldl(f, acc, xs) end
   def foldl(f), do: fn acc -> fn xs -> foldl(f, acc, xs) end end
 
   @doc "Right fold"
-  def foldr(f, acc, xs) when is_list(xs), do: List.foldr(xs, acc, fn x, a -> f.(x).(a) end)
+  def foldr(f, acc, xs) when is_list(xs), do: List.foldr(xs, acc, fn x, a -> call2(f, x, a) end)
+
+  def foldr(f, acc, xs) when is_map(xs) and not is_struct(xs),
+    do: xs |> Map.values() |> List.foldr(acc, fn value, a -> call2(f, value, a) end)
+
+  def foldr(f, acc, %MapSet{} = xs),
+    do: xs |> MapSet.to_list() |> List.foldr(acc, fn value, a -> call2(f, value, a) end)
 
   # Curried versions
   def foldr(f, acc), do: fn xs -> foldr(f, acc, xs) end
@@ -105,7 +121,7 @@ defmodule Nova.Runtime do
   @doc "Monadic fold"
   def foldM(f, acc, xs) when is_list(xs) do
     Enum.reduce_while(xs, {:right, acc}, fn x, {:right, a} ->
-      case f.(a).(x) do
+      case call2(f, a, x) do
         {:right, new_acc} -> {:cont, {:right, new_acc}}
         {:left, err} -> {:halt, {:left, err}}
       end
@@ -210,4 +226,18 @@ defmodule Nova.Runtime do
 
   @doc "Wrap value in Right (for Either monad)"
   def pure(x), do: {:right, x}
+
+  def fst({:tuple, a, _}), do: a
+  def snd({:tuple, _, b}), do: b
+
+  def fold_m(f, acc, xs), do: foldM(f, acc, xs)
+  def fold_m(f, acc), do: foldM(f, acc)
+  def fold_m(f), do: foldM(f)
+  def from_maybe(default, value), do: fromMaybe(default, value)
+  def from_maybe(default), do: fromMaybe(default)
+  def is_just(value), do: isJust(value)
+  def is_nothing(value), do: isNothing(value)
+
+  defp call2(f, a, b) when is_function(f, 2), do: f.(a, b)
+  defp call2(f, a, b), do: f.(a).(b)
 end

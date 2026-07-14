@@ -23,6 +23,7 @@ main = do
   testFile "Ast.purs" "src/Nova/Compiler/Ast.purs"
   testFile "Tokenizer.purs" "src/Nova/Compiler/Tokenizer.purs"
   testFile "Parser.purs" "src/Nova/Compiler/Parser.purs"
+  testFile "CodeGen.purs" "src/Nova/Compiler/CodeGen.purs"
 
   log ""
   log "=== Tests Complete ==="

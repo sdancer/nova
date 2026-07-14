@@ -597,8 +597,8 @@ parseQualifiedConstructorPatternSimple tokens =
             -- We have "Identifier." - parse full qualified name
             Tuple name rest <- parseQualifiedConstructorName ts
             success (Ast.PatCon name []) rest
-          else failure "Expected qualified constructor pattern"
-        Nothing -> failure "Expected qualified constructor pattern"
+          else success (Ast.PatCon t.value []) (Array.drop 1 ts)
+        Nothing -> success (Ast.PatCon t.value []) (Array.drop 1 ts)
       else failure "Expected qualified constructor pattern"
     Nothing -> failure "Expected qualified constructor pattern"
   where
@@ -2129,8 +2129,10 @@ collectWhereBindings tokens whereCol acc = do
         -- Check if this is a type signature (name ::) or a function definition (name params =)
         case isTypeSignatureLine tokens' of
           true -> do
-            -- Skip the type signature line and continue with the actual binding
-            let rest = skipToNextLine tokens'
+            -- Skip the complete type signature and continue with the actual
+            -- binding. A signature may wrap across several more-indented
+            -- lines, for example one arrow per line.
+            let rest = skipTypeSignature tokens' t.column
             collectWhereBindings rest whereCol acc
           false -> do
             -- Where bindings are local function definitions
@@ -2160,24 +2162,24 @@ collectWhereBindings tokens whereCol acc = do
           else false
         _ -> false
 
-    -- Skip tokens until we hit a newline at column 1 or a newline followed by content at whereCol level
-    skipToNextLine :: Array Token -> Array Token
-    skipToNextLine toks =
+    -- Skip a possibly multiline local type signature. Its definition starts
+    -- at the same indentation as the signature; continuation lines are more
+    -- deeply indented.
+    skipTypeSignature :: Array Token -> Int -> Array Token
+    skipTypeSignature toks signatureCol =
       case Array.head toks of
         Nothing -> toks
         Just t ->
           if t.tokenType == TokNewline
           then
-            let rest = Array.drop 1 toks
+            let rest = skipNewlines (Array.drop 1 toks)
             in case Array.head rest of
               Just t' ->
-                if t'.column <= whereCol
-                then toks  -- Stop before the newline - outdented content
-                else if t'.tokenType == TokNewline
-                then skipToNextLine rest  -- Skip blank line
-                else rest  -- Continue with indented content
-              _ -> rest  -- Continue with indented content
-          else skipToNextLine (Array.drop 1 toks)
+                if t'.column <= signatureCol
+                then rest
+                else skipTypeSignature rest signatureCol
+              _ -> rest
+          else skipTypeSignature (Array.drop 1 toks) signatureCol
 
 parseTypeSignatureDecl :: Array Token -> ParseResult Ast.Declaration
 parseTypeSignatureDecl tokens = do

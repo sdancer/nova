@@ -209,4 +209,9 @@ defmodule Nova.Map do
     |> Enum.sort_by(fn {k, _v} -> k end)
     |> Enum.map(fn {k, v} -> {:tuple, k, v} end)
   end
+
+  def from_foldable(xs), do: fromFoldable(xs)
+  def to_unfoldable(m), do: toUnfoldable(m)
+  def find_with_default(default, key, m), do: findWithDefault(default, key, m)
+  def is_empty(m), do: isEmpty(m)
 end

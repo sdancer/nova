@@ -902,6 +902,10 @@ typeExprToType varMap (TyExprCon name) =
   case name of
     -- Type wildcard/hole - use a special placeholder type var
     "_" -> TyVar (mkTVar (-999) "_")
+    -- PureScript calls this type Boolean; Nova's internal/prelude name is
+    -- Bool. Normalize both spellings at the source-type boundary.
+    "Boolean" -> tBool
+    "Bool" -> tBool
     "TCon" -> TyRecord { fields: Map.fromFoldable [Tuple "name" tString, Tuple "args" (tArray tTypeHolder)], row: Nothing }
     "TVar" -> TyRecord { fields: Map.fromFoldable [Tuple "id" tInt, Tuple "name" tString], row: Nothing }
     "Token" -> TyRecord { fields: Map.fromFoldable [Tuple "tokenType" (TyCon (mkTCon "TokenType" [])), Tuple "value" tString, Tuple "line" tInt, Tuple "column" tInt, Tuple "pos" tInt], row: Nothing }
@@ -1001,9 +1005,10 @@ checkModule env decls =
 collectTypeAliases :: Array Declaration -> Map.Map String Type
 collectTypeAliases decls = Array.foldl collect Map.empty decls
   where
-    collect m (DeclTypeAlias ta)
-      | Array.null ta.typeVars = Map.insert ta.name (typeExprToType Map.empty ta.ty) m
-      | otherwise = m  -- Skip parameterized aliases here
+    collect m (DeclTypeAlias ta) =
+      if Array.null ta.typeVars
+      then Map.insert ta.name (typeExprToType Map.empty ta.ty) m
+      else m  -- Skip parameterized aliases here
     collect m _ = m
 
 -- | Collect parameterized type aliases into a Map String TypeAliasInfo
@@ -1106,8 +1111,10 @@ mergeMultiClauseFunctions decls = Array.fromFoldable (go (Array.toUnfoldable dec
     -- Collect adjacent DeclFunction with same name
     collectSameName :: String -> List Declaration -> List FunctionDeclaration -> Tuple (List FunctionDeclaration) (List Declaration)
     collectSameName name Nil acc = Tuple acc Nil
-    collectSameName name (Cons (DeclFunction f) rest) acc
-      | f.name == name = collectSameName name rest (List.Cons f acc)
+    collectSameName name (Cons (DeclFunction f) rest) acc =
+      if f.name == name
+      then collectSameName name rest (List.Cons f acc)
+      else Tuple acc (Cons (DeclFunction f) rest)
     collectSameName _ remaining acc = Tuple acc remaining
 
     -- Merge multiple function clauses into one with case expression

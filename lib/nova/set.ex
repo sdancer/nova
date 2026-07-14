@@ -108,4 +108,8 @@ defmodule Nova.Set do
 
   @doc "Convert set to sorted list"
   def toAscList(s), do: s |> MapSet.to_list() |> Enum.sort()
+
+  def from_foldable(xs), do: fromFoldable(xs)
+  def to_unfoldable(s), do: toUnfoldable(s)
+  def is_empty(s), do: isEmpty(s)
 end
